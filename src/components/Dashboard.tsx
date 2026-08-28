@@ -92,7 +92,7 @@ export default function Dashboard({
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
   // Dynamic store & Todanus name
-  const cleanStoreName = currentStore?.name ? currentStore.name.replace(/^TDN\s*/i, '').trim() : 'CIKUT';
+  const cleanStoreName = currentStore?.name ? String(currentStore.name).replace(/^TDN\s*/i, '').trim() : 'CIKUT';
   const todanusDisplay = `TODANUS ${cleanStoreName.toUpperCase()}`;
 
   useEffect(() => {
@@ -186,10 +186,10 @@ export default function Dashboard({
       'RENDANG POT FRESH',
       'RAWON',
       'RENDANG SHANKLE',
-      ...customPlans,
-      ...items.map((i) => (i.plannedFabrication || '').trim().toUpperCase()).filter(Boolean),
+      ...(Array.isArray(customPlans) ? customPlans.map((p) => String(p || '').trim().toUpperCase()) : []),
+      ...items.map((i) => String(i.plannedFabrication || '').trim().toUpperCase()).filter(Boolean),
     ])
-  );
+  ).filter(Boolean);
 
   // Helper to save a new custom plan
   const handleSaveNewCustomPlan = (planName: string, selectTarget: 'main' | 'modal') => {
