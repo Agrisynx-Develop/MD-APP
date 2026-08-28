@@ -1,0 +1,8 @@
+{
+  "name": "excel version Butcher Meat Tracker",
+  "description": "A lightweight, zero-lag meat thawing, fabrication, shrinkage tracking, and daily closing manager designed specifically for butchers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
