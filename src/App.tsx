@@ -39,6 +39,10 @@ import {
 import {
   getGoogleAppsScriptUrl,
   getLastSyncTime,
+  upsertRecordToSheets,
+  deleteRecordFromSheets,
+  updateTableInSheets,
+  pushAllDataToSheets,
 } from './utils/sheetsApi';
 import { matchStoreEntity, getEffectiveStore } from './utils/storeHelper';
 
@@ -283,42 +287,37 @@ export default function App() {
       setLossConfig(getLossConfig());
     } finally {
       setIsCloudSyncing(false);
-      // Check saved user session
-      const savedUserStr = localStorage.getItem('current_logged_user');
-      if (savedUserStr) {
-        try {
-          const parsed = JSON.parse(savedUserStr);
-          if (parsed && parsed.id) {
-            const roleNorm = normalizeRole(parsed.role);
-            const userObj = { ...parsed, role: roleNorm };
-            setCurrentUserState(userObj);
-            if (roleNorm === 'md') {
-              setActiveTab('md');
-            } else if (roleNorm === 'admin') {
-              setActiveTab('admin_toko');
-            } else {
-              setActiveTab('dashboard');
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
       setIsInitializing(false);
     }
   };
 
   useEffect(() => {
-    fetchAllData();
-
-    // Multi-device polling: periodic auto-sync every 15 seconds
-    const interval = setInterval(() => {
-      if (getGoogleAppsScriptUrl()) {
-        fetchAllData(true);
+    // 1. Initialize user session and default tab ONCE on mount
+    const savedUserStr = localStorage.getItem('current_logged_user');
+    if (savedUserStr) {
+      try {
+        const parsed = JSON.parse(savedUserStr);
+        if (parsed && parsed.id) {
+          const roleNorm = normalizeRole(parsed.role);
+          const userObj = { ...parsed, role: roleNorm };
+          setCurrentUserState(userObj);
+          if (roleNorm === 'md') {
+            setActiveTab('md');
+          } else if (roleNorm === 'admin') {
+            setActiveTab('admin_toko');
+          } else {
+            setActiveTab('dashboard');
+          }
+        }
+      } catch {
+        // ignore
       }
-    }, 15000);
+    }
 
-    // Sync on window focus or visibility change (e.g. user switching between laptop and phone)
+    // 2. Fetch initial data on mount (without touching activeTab)
+    fetchAllData(true);
+
+    // 3. Gentle sync on tab return / window focus (NEVER resets activeTab)
     const handleFocus = () => {
       if (getGoogleAppsScriptUrl()) {
         fetchAllData(true);
@@ -326,12 +325,9 @@ export default function App() {
     };
 
     window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
 
     return () => {
-      clearInterval(interval);
       window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
     };
   }, []);
 
@@ -379,7 +375,8 @@ export default function App() {
     setItems(updated);
     saveThawingItems(updated);
 
-    // Sync to SQL backend
+    // Sync to backend & Google Sheets immediately upon completion
+    upsertRecordToSheets('thawing_items', item);
     fetch('/api/thawing-items', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -393,6 +390,7 @@ export default function App() {
     setItems(updated);
     saveThawingItems(updated);
 
+    upsertRecordToSheets('thawing_items', updatedItem);
     fetch('/api/thawing-items', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -408,6 +406,7 @@ export default function App() {
     saveThawingItems(updated);
 
     ids.forEach((id) => {
+      deleteRecordFromSheets('thawing_items', id);
       deleteThawingItemFromCloud(id);
       fetch(`/api/thawing-items/${id}`, { method: 'DELETE' }).catch(() => {});
     });
@@ -415,6 +414,7 @@ export default function App() {
 
   // Handler: Confirm Thawing Finish (MANDATORY Photo)
   const handleStartFabrication = (id: string, weightAfter: number, photoImage?: string) => {
+    let targetUpdatedObj: ThawingItem | null = null;
     const updated = items.map((item) => {
       if (item.id === id) {
         const lossKg = Math.max(0, item.weightBeforeThawing - weightAfter);
@@ -428,6 +428,7 @@ export default function App() {
           shrinkageThawingPercent: lossPct,
           image: photoImage || item.image || '',
         };
+        targetUpdatedObj = updatedObj;
         fetch('/api/thawing-items', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -439,6 +440,9 @@ export default function App() {
     });
     setItems(updated);
     saveThawingItems(updated);
+    if (targetUpdatedObj) {
+      upsertRecordToSheets('thawing_items', targetUpdatedObj);
+    }
   };
 
   // Handler: Save Segments from SegmentasiPabrikasi
@@ -471,7 +475,8 @@ export default function App() {
     setSegments(updatedSegments);
     saveFabricationSegments(updatedSegments);
 
-    // Sync to SQL
+    // Sync to SQL & Sheets
+    createdSegments.forEach((seg) => upsertRecordToSheets('fabrication_segments', seg));
     fetch('/api/fabrication-segments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -491,6 +496,10 @@ export default function App() {
     );
     setItems(updatedItems);
     saveThawingItems(updatedItems);
+    const updatedParent = updatedItems.find((i) => i.id === itemId);
+    if (updatedParent) {
+      upsertRecordToSheets('thawing_items', updatedParent);
+    }
   };
 
   // Handler: Update Sales from UpdateSales
@@ -533,6 +542,7 @@ export default function App() {
 
     setSegments(updatedSegments);
     saveFabricationSegments(updatedSegments);
+    updateTableInSheets('fabrication_segments', updatedSegments);
 
     fetch('/api/fabrication-segments', {
       method: 'POST',
@@ -554,6 +564,7 @@ export default function App() {
     setReports(updated);
     saveDailyReports(updated);
 
+    upsertRecordToSheets('daily_closing_reports', report);
     fetch('/api/reports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -581,6 +592,7 @@ export default function App() {
     setClosingRecords(updated);
     saveClosingPlanRecords(updated);
 
+    upsertRecordToSheets('closing_plan_records', newRec);
     fetch('/api/closing-records', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -629,6 +641,7 @@ export default function App() {
         const updatedSegments = segments.map((s) => (s.id === id ? updatedSource : s)).concat(newTransferSegment);
         setSegments(updatedSegments);
         saveFabricationSegments(updatedSegments);
+        updateTableInSheets('fabrication_segments', updatedSegments);
       } else {
         const updatedSegments = segments.map((s) => {
           if (s.id === id) {
@@ -644,6 +657,7 @@ export default function App() {
         });
         setSegments(updatedSegments);
         saveFabricationSegments(updatedSegments);
+        updateTableInSheets('fabrication_segments', updatedSegments);
       }
     } else {
       const sourceItem = items.find((i) => i.id === id);
@@ -676,6 +690,7 @@ export default function App() {
         const updatedItems = items.map((i) => (i.id === id ? updatedSourceItem : i)).concat(newTransferItem);
         setItems(updatedItems);
         saveThawingItems(updatedItems);
+        updateTableInSheets('thawing_items', updatedItems);
       } else {
         const updatedItems = items.map((i) => {
           if (i.id === id) {
@@ -691,6 +706,7 @@ export default function App() {
         });
         setItems(updatedItems);
         saveThawingItems(updatedItems);
+        updateTableInSheets('thawing_items', updatedItems);
       }
     }
   };
@@ -708,6 +724,7 @@ export default function App() {
     });
     setItems(updatedItems);
     saveThawingItems(updatedItems);
+    updateTableInSheets('thawing_items', updatedItems);
 
     if (updateSegmentNames) {
       const updatedSegments = segments.map((seg) => {
@@ -721,6 +738,7 @@ export default function App() {
       });
       setSegments(updatedSegments);
       saveFabricationSegments(updatedSegments);
+      updateTableInSheets('fabrication_segments', updatedSegments);
     }
   };
 
@@ -735,6 +753,7 @@ export default function App() {
     setAdjustments(updated);
     saveStockAdjustments(updated);
 
+    upsertRecordToSheets('stock_adjustments', newAdj);
     fetch('/api/adjustments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -747,6 +766,7 @@ export default function App() {
     setAdjustments(updated);
     saveStockAdjustments(updated);
 
+    deleteRecordFromSheets('stock_adjustments', id);
     fetch(`/api/adjustments/${id}`, { method: 'DELETE' }).catch(console.error);
   };
 
@@ -797,6 +817,9 @@ export default function App() {
     saveStores(updatedStores);
     saveUsers(updatedUsers);
 
+    updateTableInSheets('stores', updatedStores);
+    updateTableInSheets('users', updatedUsers);
+
     // Save to SQL
     try {
       await fetch('/api/stores', {
@@ -826,6 +849,7 @@ export default function App() {
     }
     setCogsList(updatedCogs);
     saveCogsMaster(updatedCogs);
+    updateTableInSheets('cogs_master', updatedCogs);
 
     fetch('/api/cogs', {
       method: 'POST',
@@ -1734,7 +1758,7 @@ export default function App() {
 
       {/* MODAL 4: GOOGLE SPREADSHEET CLOUD SETUP (Multi-Device Sync) */}
       <GoogleSheetsSetupModal
-        isOpen={isSheetsModalOpen} 
+        isOpen={isSheetsModalOpen}
         onClose={() => setIsSheetsModalOpen(false)}
         onDataSynced={() => {
           fetchAllData();
