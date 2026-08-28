@@ -1117,21 +1117,21 @@ export default function MdHelicopterView({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {allUniquePlanNames.map((planName) => {
-                      const safePlan = (planName || '').toLowerCase().trim();
+                      const safePlan = String(planName || '').toLowerCase().trim();
                       const rec = drillClosing.find((c) => {
-                        const cPlan = (c.planName || '').toLowerCase().trim();
+                        const cPlan = String(c.planName || '').toLowerCase().trim();
                         return cPlan === safePlan || cPlan.includes(safePlan) || safePlan.includes(cPlan);
                       });
                       const planItems = drillTodayItems.filter((i) => {
-                        const iPlan = (i.plannedFabrication || i.name || '').toLowerCase().trim();
+                        const iPlan = String(i.plannedFabrication || i.name || '').toLowerCase().trim();
                         return iPlan === safePlan || iPlan.includes(safePlan) || safePlan.includes(iPlan);
                       });
                       const carryItems = drillCarryoverItems.filter((i) => {
-                        const iPlan = (i.plannedFabrication || i.name || '').toLowerCase().trim();
+                        const iPlan = String(i.plannedFabrication || i.name || '').toLowerCase().trim();
                         return iPlan === safePlan || iPlan.includes(safePlan) || safePlan.includes(iPlan);
                       });
                       const planSegs = drillSegments.filter((s) => {
-                        const sPlan = (s.plannedFabrication || s.segmentName || '').toLowerCase().trim();
+                        const sPlan = String(s.plannedFabrication || s.segmentName || '').toLowerCase().trim();
                         return sPlan === safePlan || sPlan.includes(safePlan) || safePlan.includes(sPlan);
                       });
 
