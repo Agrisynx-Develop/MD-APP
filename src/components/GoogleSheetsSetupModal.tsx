@@ -326,9 +326,19 @@ export default function GoogleSheetsSetupModal({
                     </button>
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-500">
-                  Dapatkan URL ini setelah menerapkan (Deploy) skrip Web App di Google Sheets dengan hak akses "Anyone".
-                </p>
+                <div className="p-2.5 rounded-lg bg-blue-50/80 border border-blue-200 text-blue-900 text-[11px] space-y-1">
+                  <div className="font-semibold flex items-center gap-1">
+                    <span>💡 Tips Otomatisasi (Bebas Input di HP):</span>
+                  </div>
+                  <p>
+                    Anda bisa memasukkan URL ini ke Environment Variable Netlify / <code>.env</code> dengan nama:
+                    <br />
+                    <code className="bg-blue-100 px-1.5 py-0.5 rounded font-mono text-blue-950 font-bold select-all">VITE_GOOGLE_SHEETS_APPS_SCRIPT_URL=https://script.google.com/.../exec</code>
+                  </p>
+                  <p className="text-blue-700">
+                    Dengan begitu, setiap kali HP atau Laptop membuka link Netlify, aplikasi langsung otomatis terhubung tanpa perlu paste URL manual lagi.
+                  </p>
+                </div>
               </div>
 
               {/* Test Result Indicator */}
