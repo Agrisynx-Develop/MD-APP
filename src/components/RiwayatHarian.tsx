@@ -40,7 +40,7 @@ export default function RiwayatHarian({
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Dynamic store name
-  const cleanStoreName = currentStore?.name ? currentStore.name.replace(/^TDN\s*/i, '').trim() : 'CIKUT';
+  const cleanStoreName = currentStore?.name ? String(currentStore.name).replace(/^TDN\s*/i, '').trim() : 'CIKUT';
   const todanusDisplay = `TODANUS ${cleanStoreName.toUpperCase()}`;
 
   // Photo Attachments State for Today's Draft
