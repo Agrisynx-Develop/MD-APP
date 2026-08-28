@@ -1,6 +1,6 @@
 {
-  "name": "excel version Butcher Meat Tracker",
-  "description": "A lightweight, zero-lag meat thawing, fabrication, shrinkage tracking, and daily closing manager designed specifically for butchers.",
+  "name": "TDN Meat Tracker",
+  "description": "Sistem pelacakan thawing, pabrikasi daging, susut harian, dan closing multi-device terintegrasi Google Spreadsheet untuk Butcher dan MD Pusat.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
