@@ -85,9 +85,9 @@ import {
 } from 'lucide-react';
 
 // Helper to normalize user role regardless of casing ('MD_PUSAT', 'ADMIN_TOKO', 'md', 'admin', 'butcher')
-export function normalizeRole(role?: string): 'butcher' | 'admin' | 'md' {
+export function normalizeRole(role?: any): 'butcher' | 'admin' | 'md' {
   if (!role) return 'butcher';
-  const r = role.toLowerCase().trim();
+  const r = String(role).toLowerCase().trim();
   if (r.includes('md') || r.includes('merchandis') || r.includes('pusat')) {
     return 'md';
   }
@@ -906,7 +906,34 @@ export default function App() {
 
   // If no user is logged in, show SQL Authentication Screen
   if (!currentUser) {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <>
+        <LoginScreen
+          onLoginSuccess={handleLoginSuccess}
+          onOpenSheetsModal={() => setIsSheetsModalOpen(true)}
+          cloudConnected={cloudConnected}
+        />
+        <GoogleSheetsSetupModal
+          isOpen={isSheetsModalOpen}
+          onClose={() => setIsSheetsModalOpen(false)}
+          onDataSynced={() => {
+            fetchAllData();
+            setCloudConnected(Boolean(getGoogleAppsScriptUrl()));
+          }}
+          currentAllData={{
+            stores,
+            users,
+            cogsMaster: cogsList,
+            thawingItems: items,
+            fabricationSegments: segments,
+            closingPlanRecords: closingRecords,
+            dailyClosingReports: reports,
+            stockAdjustments: adjustments,
+            lossConfig
+          }}
+        />
+      </>
+    );
   }
 
   const userRole = normalizeRole(currentUser.role);
@@ -1117,7 +1144,23 @@ export default function App() {
         </div>
 
         {/* Bottom User Controls & Functional Logout Button */}
-        <div className="p-3 border-t border-slate-800">
+        <div className="p-3 border-t border-slate-800 space-y-2">
+          <button
+            onClick={() => setIsSheetsModalOpen(true)}
+            className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-between border cursor-pointer ${
+              cloudConnected
+                ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-800/80 text-emerald-300'
+                : 'bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-300'
+            }`}
+            title="Pengaturan Koneksi Google Spreadsheet Cloud"
+          >
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-400" />
+              <span>Database Cloud</span>
+            </div>
+            <span className={`w-2 h-2 rounded-full ${cloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+          </button>
+
           <button
             onClick={handleLogout}
             className="w-full py-2.5 bg-red-950/80 hover:bg-red-900 border border-red-800/80 text-red-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-95"
@@ -1154,6 +1197,19 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsSheetsModalOpen(true)}
+              className={`p-2 rounded-lg border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                cloudConnected
+                  ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-800 text-emerald-300'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+              }`}
+              title="Status Database Cloud"
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span className={`w-1.5 h-1.5 rounded-full ${cloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            </button>
+
             <button
               onClick={handleLogout}
               className="flex items-center gap-1 px-2.5 py-1.5 bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-300 rounded-lg text-xs font-bold transition cursor-pointer"
@@ -1273,8 +1329,26 @@ export default function App() {
                 })}
               </div>
 
-              {/* Drawer Functional Logout */}
-              <div className="pt-4 border-t border-slate-800">
+              {/* Drawer Functional Controls */}
+              <div className="pt-4 border-t border-slate-800 space-y-2">
+                <button
+                  onClick={() => {
+                    setIsSheetsModalOpen(true);
+                    setIsMobileSidebarOpen(false);
+                  }}
+                  className={`w-full py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-between border cursor-pointer ${
+                    cloudConnected
+                      ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-800/80 text-emerald-300'
+                      : 'bg-slate-800/80 hover:bg-slate-700 border-slate-700 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Database className="w-4 h-4 text-emerald-400" />
+                    <span>Database Cloud (Sheets)</span>
+                  </div>
+                  <span className={`w-2 h-2 rounded-full ${cloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                </button>
+
                 <button
                   onClick={handleLogout}
                   className="w-full py-2.5 bg-red-950/90 hover:bg-red-900 border border-red-800 text-red-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 active:scale-95 transition"
