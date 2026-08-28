@@ -46,9 +46,10 @@ const postApiBackground = async (endpoint: string, body: any) => {
  * Resolves username input (e.g. 'md_pusat', 'butcher_ckt', 'admin_ckt', 'cikut')
  * directly to the UserAccount based on current stores and database users.
  */
-export function resolveUserFromInput(usernameInput: string): UserAccount {
-  const raw = usernameInput.trim().toLowerCase().replace(/[\s_-]+/g, '');
-  const cleanInput = usernameInput.trim().toLowerCase();
+export function resolveUserFromInput(usernameInput: any): UserAccount {
+  const str = String(usernameInput || '');
+  const raw = str.trim().toLowerCase().replace(/[\s_-]+/g, '');
+  const cleanInput = str.trim().toLowerCase();
 
   // 1. MD Pusat
   if (
