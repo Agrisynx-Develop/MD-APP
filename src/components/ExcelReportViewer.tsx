@@ -189,12 +189,12 @@ export default function ExcelReportViewer({
     const masterVal = getCogsForCategory(cogsList, catQuery);
     if (masterVal > 0) return masterVal;
 
-    const sName = (name || '').toLowerCase().trim();
-    const sCat = (cat || '').toLowerCase().trim();
+    const sName = String(name || '').toLowerCase().trim();
+    const sCat = String(cat || '').toLowerCase().trim();
     const exact = (cogsList || []).find((c) => {
-      const cName = (c.itemName || (c as any).planName || '').toLowerCase().trim();
-      const cCode = (c.itemCode || '').toLowerCase().trim();
-      return (sName && (cName === sName || cCode === sName)) || (sCat && (c.category || '').toLowerCase().trim() === sCat);
+      const cName = String(c.itemName || (c as any).planName || '').toLowerCase().trim();
+      const cCode = String(c.itemCode || '').toLowerCase().trim();
+      return (sName && (cName === sName || cCode === sName)) || (sCat && String(c.category || '').toLowerCase().trim() === sCat);
     });
     if (exact && exact.cogsPerKg > 0) return exact.cogsPerKg;
 
