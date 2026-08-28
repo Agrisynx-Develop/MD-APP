@@ -156,7 +156,7 @@ export default function SegmentasiPabrikasi({
     setErrorMsg('');
     
     const planName = (item.plannedFabrication && item.plannedFabrication !== 'PENDING')
-      ? item.plannedFabrication.trim()
+      ? String(item.plannedFabrication).trim()
       : 'DAGING RENDANG PREMIUM';
     const purpose: 'UNTUK PESANAN' | 'UNTUK DISPLAY' = item.openingPurpose === 'UNTUK PESANAN' ? 'UNTUK PESANAN' : 'UNTUK DISPLAY';
 
