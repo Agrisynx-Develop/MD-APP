@@ -35,8 +35,12 @@ export function getGoogleAppsScriptUrl(): string {
     return localUrl.trim();
   }
 
-  // 2. Vite environment variable (if set during build or deploy)
-  const envUrl = (import.meta as any).env?.VITE_GOOGLE_SHEETS_APPS_SCRIPT_URL;
+  // 2. Vite environment variable (if set during build or deploy on Netlify / Cloud)
+  const envUrl = 
+    (import.meta as any).env?.VITE_GOOGLE_SHEETS_APPS_SCRIPT_URL ||
+    (import.meta as any).env?.VITE_GOOGLE_APPS_SCRIPT_URL ||
+    (import.meta as any).env?.VITE_APPS_SCRIPT_URL;
+
   if (envUrl && typeof envUrl === 'string' && envUrl.trim().startsWith('http')) {
     return envUrl.trim();
   }
