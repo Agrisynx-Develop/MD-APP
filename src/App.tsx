@@ -1734,7 +1734,7 @@ export default function App() {
 
       {/* MODAL 4: GOOGLE SPREADSHEET CLOUD SETUP (Multi-Device Sync) */}
       <GoogleSheetsSetupModal
-        isOpen={isSheetsModalOpen}
+        isOpen={isSheetsModalOpen} 
         onClose={() => setIsSheetsModalOpen(false)}
         onDataSynced={() => {
           fetchAllData();
