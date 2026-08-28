@@ -146,21 +146,22 @@ export function aggregateShrinkageByRencanaPotong(
   const allPlanNames = Array.from(
     new Set([
       ...defaultPlans,
-      ...userCustomPlans.map((p) => p.trim().toUpperCase()),
-      ...itemPlans.map((p) => p.trim().toUpperCase()),
-      ...segmentPlans.map((p) => p.trim().toUpperCase()),
+      ...userCustomPlans.map((p) => String(p || '').trim().toUpperCase()),
+      ...itemPlans.map((p) => String(p || '').trim().toUpperCase()),
+      ...segmentPlans.map((p) => String(p || '').trim().toUpperCase()),
     ])
-  );
+  ).filter(Boolean);
 
   const planSummaries: RencanaPotongShrinkageSummary[] = allPlanNames.map((planName) => {
+    const safePlanName = String(planName || '').trim().toUpperCase();
     const planItems = items.filter(
-      (item) => (item.plannedFabrication || '').trim().toUpperCase() === planName.trim().toUpperCase()
+      (item) => String(item.plannedFabrication || '').trim().toUpperCase() === safePlanName
     );
 
     const planSegments = (segments || []).filter((seg) => {
       const parent = items.find((i) => i.id === seg.itemId);
-      const p = seg.plannedFabrication || parent?.plannedFabrication || '';
-      return p.trim().toUpperCase() === planName.trim().toUpperCase();
+      const p = String(seg.plannedFabrication || parent?.plannedFabrication || '').trim().toUpperCase();
+      return p === safePlanName;
     });
 
     const totalSebelum = planItems.reduce((acc, i) => acc + (i.weightBeforeThawing || 0), 0);
@@ -319,14 +320,15 @@ export function aggregateShrinkageByPabrikasi(
 
     const allPlanNames = Array.from(
       new Set([
-        ...categoryItems.map((item) => item.plannedFabrication).filter(Boolean),
-        ...defaultPlansForCat,
+        ...categoryItems.map((item) => String(item.plannedFabrication || '').trim().toUpperCase()).filter(Boolean),
+        ...defaultPlansForCat.map((p) => String(p || '').trim().toUpperCase()),
       ])
-    );
+    ).filter(Boolean);
 
     const rencanaBreakdown: RencanaPotonganBreakdown[] = allPlanNames.map((planName) => {
+      const safePlanName = String(planName || '').trim().toUpperCase();
       const planItems = categoryItems.filter(
-        (item) => (item.plannedFabrication || '').trim().toUpperCase() === planName.trim().toUpperCase()
+        (item) => String(item.plannedFabrication || '').trim().toUpperCase() === safePlanName
       );
       const planBahanAwal = planItems.reduce((acc, i) => acc + (i.weightBeforeThawing || 0), 0);
       const planSetelahThaw = planItems.reduce(
