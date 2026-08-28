@@ -32,8 +32,14 @@ import {
   saveDailyReports,
   getLossConfig,
   saveLossConfig,
-  resetDatabase
+  resetDatabase,
+  pullAllDataFromGoogleSheets,
+  deleteThawingItemFromCloud,
 } from './utils/db';
+import {
+  getGoogleAppsScriptUrl,
+  getLastSyncTime,
+} from './utils/sheetsApi';
 import { matchStoreEntity, getEffectiveStore } from './utils/storeHelper';
 
 // Auth Screen
@@ -53,6 +59,7 @@ import ButcherClosingView from './components/ButcherClosingView';
 // Modals
 import TransferPurposeModal from './components/TransferPurposeModal';
 import EditRencanaPotongModal from './components/EditRencanaPotongModal';
+import GoogleSheetsSetupModal from './components/GoogleSheetsSetupModal';
 
 // Icons
 import {
@@ -123,6 +130,12 @@ export default function App() {
     salesPredictionKg: 40.0,
   });
 
+  // Google Sheets Cloud Sync & Multi-Device State
+  const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [lastCloudSync, setLastCloudSync] = useState<string | null>(getLastSyncTime());
+  const [cloudConnected, setCloudConnected] = useState<boolean>(Boolean(getGoogleAppsScriptUrl()));
+
   // Modal states
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isEditPlanModalOpen, setIsEditPlanModalOpen] = useState(false);
@@ -138,9 +151,39 @@ export default function App() {
   const [newAdminPassword, setNewAdminPassword] = useState('admin123');
   const [addStoreSuccess, setAddStoreSuccess] = useState(false);
 
-  // Initial Load from Integrated Database or local cache
-  const fetchAllData = async () => {
+  // Initial Load from Integrated Database, Google Sheets, or local cache
+  const fetchAllData = async (silent = false) => {
+    if (!silent) setIsCloudSyncing(true);
     try {
+      const hasSheetsUrl = Boolean(getGoogleAppsScriptUrl());
+      setCloudConnected(hasSheetsUrl);
+
+      // 1. If Google Apps Script is configured, prioritize pulling directly from Google Spreadsheet
+      if (hasSheetsUrl) {
+        const sheetsRes = await pullAllDataFromGoogleSheets();
+        if (sheetsRes.success && sheetsRes.data) {
+          const d = sheetsRes.data;
+          if (d.stores && d.stores.length > 0) {
+            setStores(d.stores);
+            setSelectedStoreIdForMd((prev) => {
+              if (d.stores && d.stores.some((s) => s.id === prev || matchStoreEntity(prev, s))) return prev;
+              return d.stores ? d.stores[0].id : prev;
+            });
+          }
+          if (d.users && d.users.length > 0) setUsers(d.users);
+          if (d.cogsMaster && d.cogsMaster.length > 0) setCogsList(normalizeCogsList(d.cogsMaster));
+          if (d.thawingItems) setItems(d.thawingItems);
+          if (d.fabricationSegments) setSegments(d.fabricationSegments);
+          if (d.closingPlanRecords) setClosingRecords(d.closingPlanRecords);
+          if (d.dailyClosingReports) setReports(d.dailyClosingReports);
+          if (d.stockAdjustments) setAdjustments(d.stockAdjustments);
+          if (d.lossConfig) setLossConfig(d.lossConfig);
+          setLastCloudSync(new Date().toISOString());
+          return;
+        }
+      }
+
+      // 2. Fallback: Fetch from backend API / local cache
       const [resStores, resUsers, resCogs, resItems, resSegs, resAdjs, resRecords, resReps] = await Promise.all([
         fetch('/api/stores').catch(() => null),
         fetch('/api/users').catch(() => null),
@@ -239,6 +282,7 @@ export default function App() {
       setReports(getDailyReports());
       setLossConfig(getLossConfig());
     } finally {
+      setIsCloudSyncing(false);
       // Check saved user session
       const savedUserStr = localStorage.getItem('current_logged_user');
       if (savedUserStr) {
@@ -266,6 +310,29 @@ export default function App() {
 
   useEffect(() => {
     fetchAllData();
+
+    // Multi-device polling: periodic auto-sync every 15 seconds
+    const interval = setInterval(() => {
+      if (getGoogleAppsScriptUrl()) {
+        fetchAllData(true);
+      }
+    }, 15000);
+
+    // Sync on window focus or visibility change (e.g. user switching between laptop and phone)
+    const handleFocus = () => {
+      if (getGoogleAppsScriptUrl()) {
+        fetchAllData(true);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
   }, []);
 
   // Handler: Login Success from SQL
@@ -340,8 +407,9 @@ export default function App() {
     setItems(updated);
     saveThawingItems(updated);
 
-    ids.forEach(id => {
-      fetch(`/api/thawing-items/${id}`, { method: 'DELETE' }).catch(console.error);
+    ids.forEach((id) => {
+      deleteThawingItemFromCloud(id);
+      fetch(`/api/thawing-items/${id}`, { method: 'DELETE' }).catch(() => {});
     });
   };
 
@@ -1589,6 +1657,27 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* MODAL 4: GOOGLE SPREADSHEET CLOUD SETUP (Multi-Device Sync) */}
+      <GoogleSheetsSetupModal
+        isOpen={isSheetsModalOpen}
+        onClose={() => setIsSheetsModalOpen(false)}
+        onDataSynced={() => {
+          fetchAllData();
+          setCloudConnected(Boolean(getGoogleAppsScriptUrl()));
+        }}
+        currentAllData={{
+          stores,
+          users,
+          cogsMaster: cogsList,
+          thawingItems: items,
+          fabricationSegments: segments,
+          closingPlanRecords: closingRecords,
+          dailyClosingReports: reports,
+          stockAdjustments: adjustments,
+          lossConfig
+        }}
+      />
     </div>
   );
 }
