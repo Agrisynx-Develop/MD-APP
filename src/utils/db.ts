@@ -9,6 +9,14 @@ import {
   DailyClosingReport,
   LossAlertConfig,
 } from '../types';
+import {
+  fetchAllDataFromSheets,
+  upsertRecordToSheets,
+  deleteRecordFromSheets,
+  updateTableInSheets,
+  getGoogleAppsScriptUrl,
+  AllSheetsData
+} from './sheetsApi';
 
 // Default alert configuration
 const DEFAULT_CONFIG: LossAlertConfig = {
@@ -20,7 +28,7 @@ const DEFAULT_CONFIG: LossAlertConfig = {
   salesPredictionKg: 40.0,
 };
 
-// Background sync helper to update backend database
+// Background API sync helper for Node.js server (if running in full-stack mode)
 const postApiBackground = async (endpoint: string, body: any) => {
   try {
     await fetch(endpoint, {
@@ -28,8 +36,8 @@ const postApiBackground = async (endpoint: string, body: any) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-  } catch (e) {
-    console.warn(`Sync to ${endpoint} notice:`, e);
+  } catch {
+    // Ignore offline or static deploy errors
   }
 };
 
@@ -106,7 +114,7 @@ export function resolveUserFromInput(usernameInput: string): UserAccount {
   };
 }
 
-// --- DATABASE SYNCHRONIZATION HELPERS (POSTGRESQL via API) ---
+// --- DATABASE SYNCHRONIZATION HELPERS ---
 
 export const getStores = (): Store[] => {
   const data = localStorage.getItem('stores_list');
@@ -115,6 +123,10 @@ export const getStores = (): Store[] => {
 
 export const saveStores = (stores: Store[]) => {
   localStorage.setItem('stores_list', JSON.stringify(stores));
+  postApiBackground('/api/stores', stores);
+  if (getGoogleAppsScriptUrl()) {
+    updateTableInSheets('Toko_Cabang', stores);
+  }
 };
 
 export const getUsers = (): UserAccount[] => {
@@ -124,6 +136,10 @@ export const getUsers = (): UserAccount[] => {
 
 export const saveUsers = (users: UserAccount[]) => {
   localStorage.setItem('users_list', JSON.stringify(users));
+  postApiBackground('/api/users', users);
+  if (getGoogleAppsScriptUrl()) {
+    updateTableInSheets('Pengguna', users);
+  }
 };
 
 export const getCurrentUser = (): UserAccount => {
@@ -189,7 +205,7 @@ export const getCogsMaster = (): CogsMaster[] => {
   try {
     const parsed = JSON.parse(data);
     return normalizeCogsList(parsed);
-  } catch (e) {
+  } catch {
     return DEFAULT_COGS_MASTER;
   }
 };
@@ -198,6 +214,9 @@ export const saveCogsMaster = (cogs: CogsMaster[]) => {
   const normalized = normalizeCogsList(cogs);
   localStorage.setItem('cogs_master', JSON.stringify(normalized));
   postApiBackground('/api/cogs', normalized);
+  if (getGoogleAppsScriptUrl()) {
+    updateTableInSheets('Master_COGS', normalized);
+  }
 };
 
 export const getStockAdjustments = (): StockAdjustment[] => {
@@ -205,9 +224,16 @@ export const getStockAdjustments = (): StockAdjustment[] => {
   return data ? JSON.parse(data) : [];
 };
 
-export const saveStockAdjustments = (adjs: StockAdjustment[]) => {
+export const saveStockAdjustments = (adjs: StockAdjustment[], updatedSingleAdj?: StockAdjustment) => {
   localStorage.setItem('stock_adjustments', JSON.stringify(adjs));
   postApiBackground('/api/adjustments', adjs);
+  if (getGoogleAppsScriptUrl()) {
+    if (updatedSingleAdj) {
+      upsertRecordToSheets('Koreksi_Stok', updatedSingleAdj);
+    } else {
+      updateTableInSheets('Koreksi_Stok', adjs);
+    }
+  }
 };
 
 export const getClosingPlanRecords = (): ClosingPlanRecord[] => {
@@ -215,9 +241,16 @@ export const getClosingPlanRecords = (): ClosingPlanRecord[] => {
   return data ? JSON.parse(data) : [];
 };
 
-export const saveClosingPlanRecords = (records: ClosingPlanRecord[]) => {
+export const saveClosingPlanRecords = (records: ClosingPlanRecord[], updatedSingleRecord?: ClosingPlanRecord) => {
   localStorage.setItem('closing_plan_records', JSON.stringify(records));
   postApiBackground('/api/closing-records', records);
+  if (getGoogleAppsScriptUrl()) {
+    if (updatedSingleRecord) {
+      upsertRecordToSheets('Closing_Fisik', updatedSingleRecord);
+    } else {
+      updateTableInSheets('Closing_Fisik', records);
+    }
+  }
 };
 
 export const getThawingItems = (): ThawingItem[] => {
@@ -225,9 +258,22 @@ export const getThawingItems = (): ThawingItem[] => {
   return data ? JSON.parse(data) : [];
 };
 
-export const saveThawingItems = (items: ThawingItem[]) => {
+export const saveThawingItems = (items: ThawingItem[], updatedSingleItem?: ThawingItem) => {
   localStorage.setItem('thawing_items', JSON.stringify(items));
   postApiBackground('/api/thawing-items', items);
+  if (getGoogleAppsScriptUrl()) {
+    if (updatedSingleItem) {
+      upsertRecordToSheets('Thawing_Daging', updatedSingleItem);
+    } else {
+      updateTableInSheets('Thawing_Daging', items);
+    }
+  }
+};
+
+export const deleteThawingItemFromCloud = (id: string) => {
+  if (getGoogleAppsScriptUrl()) {
+    deleteRecordFromSheets('Thawing_Daging', id);
+  }
 };
 
 export const getFabricationSegments = (): FabricationSegment[] => {
@@ -235,9 +281,16 @@ export const getFabricationSegments = (): FabricationSegment[] => {
   return data ? JSON.parse(data) : [];
 };
 
-export const saveFabricationSegments = (segments: FabricationSegment[]) => {
+export const saveFabricationSegments = (segments: FabricationSegment[], updatedSingleSegment?: FabricationSegment) => {
   localStorage.setItem('fabrication_segments', JSON.stringify(segments));
   postApiBackground('/api/fabrication-segments', segments);
+  if (getGoogleAppsScriptUrl()) {
+    if (updatedSingleSegment) {
+      upsertRecordToSheets('Pabrikasi_Segmen', updatedSingleSegment);
+    } else {
+      updateTableInSheets('Pabrikasi_Segmen', segments);
+    }
+  }
 };
 
 export const getDailyReports = (): DailyClosingReport[] => {
@@ -245,9 +298,16 @@ export const getDailyReports = (): DailyClosingReport[] => {
   return data ? JSON.parse(data) : [];
 };
 
-export const saveDailyReports = (reports: DailyClosingReport[]) => {
+export const saveDailyReports = (reports: DailyClosingReport[], updatedSingleReport?: DailyClosingReport) => {
   localStorage.setItem('daily_reports', JSON.stringify(reports));
   postApiBackground('/api/reports', reports);
+  if (getGoogleAppsScriptUrl()) {
+    if (updatedSingleReport) {
+      upsertRecordToSheets('Laporan_Closing', updatedSingleReport);
+    } else {
+      updateTableInSheets('Laporan_Closing', reports);
+    }
+  }
 };
 
 export const getLossConfig = (): LossAlertConfig => {
@@ -268,7 +328,50 @@ export const resetDatabase = async () => {
   localStorage.removeItem('daily_reports');
   try {
     await fetch('/api/database/reset', { method: 'POST' });
-  } catch (e) {
-    console.warn('Backend reset notice:', e);
+  } catch {
+    // ignore
   }
+};
+
+/**
+ * Perform a full pull from Google Spreadsheet Cloud API
+ * and refresh local cache
+ */
+export const pullAllDataFromGoogleSheets = async (): Promise<{
+  success: boolean;
+  data?: AllSheetsData;
+  error?: string;
+}> => {
+  const result = await fetchAllDataFromSheets();
+  if (result.success && result.data) {
+    const d = result.data;
+    if (d.stores && d.stores.length > 0) {
+      localStorage.setItem('stores_list', JSON.stringify(d.stores));
+    }
+    if (d.users && d.users.length > 0) {
+      localStorage.setItem('users_list', JSON.stringify(d.users));
+    }
+    if (d.cogsMaster && d.cogsMaster.length > 0) {
+      localStorage.setItem('cogs_master', JSON.stringify(normalizeCogsList(d.cogsMaster)));
+    }
+    if (d.thawingItems) {
+      localStorage.setItem('thawing_items', JSON.stringify(d.thawingItems));
+    }
+    if (d.fabricationSegments) {
+      localStorage.setItem('fabrication_segments', JSON.stringify(d.fabricationSegments));
+    }
+    if (d.closingPlanRecords) {
+      localStorage.setItem('closing_plan_records', JSON.stringify(d.closingPlanRecords));
+    }
+    if (d.dailyClosingReports) {
+      localStorage.setItem('daily_reports', JSON.stringify(d.dailyClosingReports));
+    }
+    if (d.stockAdjustments) {
+      localStorage.setItem('stock_adjustments', JSON.stringify(d.stockAdjustments));
+    }
+    if (d.lossConfig) {
+      localStorage.setItem('loss_config', JSON.stringify(d.lossConfig));
+    }
+  }
+  return result;
 };
