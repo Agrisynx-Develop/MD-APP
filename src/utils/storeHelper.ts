@@ -6,19 +6,19 @@ import { Store } from '../types';
  * store names ('TDN CKR', 'tdn ckr'), and handles untagged entities gracefully.
  */
 export function matchStoreEntity(
-  entityStoreId: string | undefined | null,
-  targetStore: { id: string; code?: string; name?: string } | undefined | null
+  entityStoreId: any,
+  targetStore: { id: any; code?: any; name?: any } | undefined | null
 ): boolean {
   if (!targetStore) return true;
-  if (!entityStoreId || entityStoreId.trim() === '') {
+  if (entityStoreId === undefined || entityStoreId === null || String(entityStoreId).trim() === '') {
     // Untagged entities belong to the default/primary store
     return true;
   }
 
-  const eId = entityStoreId.toString().toLowerCase().trim();
-  const sId = (targetStore.id || '').toString().toLowerCase().trim();
-  const sCode = (targetStore.code || '').toString().toLowerCase().trim();
-  const sName = (targetStore.name || '').toString().toLowerCase().trim();
+  const eId = String(entityStoreId).toLowerCase().trim();
+  const sId = String(targetStore.id || '').toLowerCase().trim();
+  const sCode = String(targetStore.code || '').toLowerCase().trim();
+  const sName = String(targetStore.name || '').toLowerCase().trim();
 
   if (eId === sId) return true;
   if (sCode && (eId === sCode || eId === `store_${sCode}` || eId.includes(sCode))) return true;
