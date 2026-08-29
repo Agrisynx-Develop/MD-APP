@@ -1,6 +1,7 @@
 import React from 'react';
 import { ThawingItem, FabricationSegment, DailyClosingReport, ClosingPlanRecord, StockAdjustment } from '../types';
 import { Scale, AlertTriangle, ShieldCheck, PieChart, Layers, Tag } from 'lucide-react';
+import { isMatchPlan } from '../utils/storeHelper';
 
 interface SummaryProps {
   items: ThawingItem[];
@@ -424,7 +425,7 @@ export default function Summary({
 
                 // Check for closing records matching this item / plan
                 const matchingClosing = closingRecords.find(
-                  (c) => (c.planName || '').toLowerCase().includes((item.plannedFabrication || item.name || '').toLowerCase())
+                  (c) => isMatchPlan(c.planName, item.plannedFabrication || item.name)
                 );
                 const susutJualKg = matchingClosing ? matchingClosing.susutJualKg : itemSegments.reduce((sum, s) => sum + (s.periodicShrinkage || 0), 0);
                 const susutJualPct = item.weightBeforeThawing > 0 ? (susutJualKg / item.weightBeforeThawing) * 100 : 0;
