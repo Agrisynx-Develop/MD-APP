@@ -60,3 +60,40 @@ export function getEffectiveStore(
 
   return stores[0];
 }
+
+/**
+ * Normalizes and fuzzily matches plan names across all components.
+ */
+export function normalizePlanName(str?: string): string {
+  if (!str) return '';
+  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+export function isMatchPlan(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  const cleanA = a.toLowerCase().trim();
+  const cleanB = b.toLowerCase().trim();
+  if (cleanA === cleanB) return true;
+
+  const normA = normalizePlanName(cleanA);
+  const normB = normalizePlanName(cleanB);
+  if (normA === normB) return true;
+
+  if (normA.length >= 4 && normB.length >= 4) {
+    if (normA.includes(normB) || normB.includes(normA)) return true;
+  }
+
+  // Handle common aliases (e.g., 'rdang' <-> 'rendang', 'prem' <-> 'premium', 'friboy')
+  if ((normA.includes('rdang') || normA.includes('rendang')) && (normB.includes('rdang') || normB.includes('rendang'))) {
+    const isShankleA = normA.includes('shank') || normA.includes('shankle');
+    const isShankleB = normB.includes('shank') || normB.includes('shankle');
+    if (isShankleA === isShankleB) return true;
+  }
+
+  if (normA.includes('rawon') && normB.includes('rawon')) return true;
+  if (normA.includes('friboy') && normB.includes('friboy')) return true;
+  if (normA.includes('shank') && normB.includes('shank')) return true;
+
+  return false;
+}
+
