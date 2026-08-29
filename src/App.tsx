@@ -261,11 +261,32 @@ export default function App() {
 
       if (resRecords && resRecords.ok) {
         const data = await resRecords.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setClosingRecords(data);
-        } else {
-          const local = getClosingPlanRecords();
-          if (local && local.length > 0) setClosingRecords(local);
+        const local = getClosingPlanRecords();
+        const serverList = Array.isArray(data) ? data : [];
+        const localList = Array.isArray(local) ? local : [];
+
+        // Merge: Start with server records, but keep any local records that are not on the server
+        const merged = [...serverList];
+        localList.forEach((loc) => {
+          const idx = merged.findIndex(
+            (s) =>
+              matchStoreEntity(s.storeId, { id: loc.storeId }) &&
+              isMatchPlan(s.planName, loc.planName) &&
+              s.date === loc.date
+          );
+          if (idx < 0) {
+            merged.push(loc);
+          } else {
+            // If local has newer timestamp or actual stock, prioritize it
+            if (loc.actualClosingStockKg !== undefined && loc.actualClosingStockKg > 0 && (!merged[idx].actualClosingStockKg || merged[idx].actualClosingStockKg === 0)) {
+              merged[idx] = { ...merged[idx], ...loc };
+            }
+          }
+        });
+
+        setClosingRecords(merged);
+        if (merged.length > 0) {
+          localStorage.setItem('closing_plan_records', JSON.stringify(merged));
         }
       } else {
         setClosingRecords(getClosingPlanRecords());
@@ -565,23 +586,72 @@ export default function App() {
     // ADAPTIVE RECALCULATION OF CLOSING RECORDS:
     // Even if closing was already done, updating sales recalculates system stock and susut jual dynamically!
     const effectiveStoreId = currentStore?.id || currentUser?.storeId || 'store_ckr';
-    const updatedClosingRecords = closingRecords.map((rec) => {
-      if (matchStoreEntity(rec.storeId, currentStore)) {
+    const updatedItems = items.map((i) => {
+      if (isMatchPlan(i.plannedFabrication, planNameOrSegmentId) && matchStoreEntity(i.storeId, currentStore)) {
+        return {
+          ...i,
+          salesKg: (i.salesKg || 0) + salesAmountKg,
+        };
+      }
+      return i;
+    });
+    setItems(updatedItems);
+    saveThawingItems(updatedItems);
+    updateTableInSheets('thawing_items', updatedItems);
+
+    let foundMatchingRecord = false;
+    let updatedClosingRecords = closingRecords.map((rec) => {
+      if (matchStoreEntity(rec.storeId, currentStore) && isMatchPlan(rec.planName, planNameOrSegmentId)) {
+        foundMatchingRecord = true;
         const planSegments = updatedSegments.filter((s) => isMatchPlan(s.plannedFabrication, rec.planName));
-        const totalPlanSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
-        const totalTersedia = rec.openingStockKg + rec.newProcessedKg + (rec.adjustInKg || 0) - (rec.adjustOutKg || 0);
+        const totalPlanSales = planSegments.length > 0
+          ? planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0)
+          : (rec.salesKg || 0) + salesAmountKg;
+        const totalTersedia = (rec.openingStockKg || 0) + (rec.newProcessedKg || 0) + (rec.adjustInKg || 0) - (rec.adjustOutKg || 0);
         const closingBySystem = Math.max(0, totalTersedia - totalPlanSales);
-        const susutJualKg = Math.max(0, closingBySystem - rec.actualClosingStockKg);
+        const actualClosing = overridePhysicalClosingKg !== undefined ? overridePhysicalClosingKg : rec.actualClosingStockKg;
+        const susutJualKg = typeof actualClosing === 'number' ? Math.max(0, closingBySystem - actualClosing) : 0;
 
         return {
           ...rec,
           salesKg: parseFloat(totalPlanSales.toFixed(3)),
           closingStockBySystemKg: parseFloat(closingBySystem.toFixed(3)),
+          actualClosingStockKg: actualClosing,
           susutJualKg: parseFloat(susutJualKg.toFixed(3)),
         };
       }
       return rec;
     });
+
+    // If no closing record existed yet but user entered physical override or closing
+    if (!foundMatchingRecord && overridePhysicalClosingKg !== undefined) {
+      const planItems = updatedItems.filter((i) => isMatchPlan(i.plannedFabrication, planNameOrSegmentId) && matchStoreEntity(i.storeId, currentStore));
+      const carryover = planItems.filter((i) => i.isCarryover).reduce((sum, i) => sum + (i.weightBeforeThawing || 0), 0);
+      const newProc = planItems.filter((i) => !i.isCarryover).reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing || 0), 0);
+      const totalTersedia = carryover + newProc;
+      const closingBySystem = Math.max(0, totalTersedia - salesAmountKg);
+      const susutJualKg = Math.max(0, closingBySystem - overridePhysicalClosingKg);
+
+      const newRec: ClosingPlanRecord = {
+        id: `rec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        storeId: effectiveStoreId,
+        date: new Date().toISOString().split('T')[0],
+        planName: planNameOrSegmentId,
+        category: planItems[0]?.pabrikasiCategory || 'DAGING FRESH',
+        openingStockKg: carryover,
+        newProcessedKg: newProc,
+        adjustInKg: 0,
+        adjustOutKg: 0,
+        salesKg: salesAmountKg,
+        closingStockBySystemKg: closingBySystem,
+        actualClosingStockKg: overridePhysicalClosingKg,
+        susutJualKg: susutJualKg,
+        butcherName: currentUser?.fullName || currentUser?.username || 'Kasir',
+        photoUrl: '',
+        timestamp: new Date().toISOString(),
+      };
+      updatedClosingRecords = [...updatedClosingRecords, newRec];
+    }
 
     setClosingRecords(updatedClosingRecords);
     saveClosingPlanRecords(updatedClosingRecords);
@@ -600,13 +670,6 @@ export default function App() {
     const storeClosings = closingRecords.filter((r) => matchStoreEntity(r.storeId, currentStore));
     const storeSegs = segments.filter((s) => matchStoreEntity(s.storeId, currentStore));
     const storeItms = items.filter((i) => matchStoreEntity(i.storeId, currentStore));
-
-    const isMatchPlan = (a?: string, b?: string) => {
-      if (!a || !b) return false;
-      const cleanA = a.toLowerCase().trim();
-      const cleanB = b.toLowerCase().trim();
-      return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
-    };
 
     // 1. Generate carryover thawing items from actual closing physical stock
     const carryoverItems: ThawingItem[] = [];
@@ -735,8 +798,7 @@ export default function App() {
     const existingIdx = closingRecords.findIndex(
       (r) =>
         matchStoreEntity(r.storeId, { id: newRec.storeId }) &&
-        isMatchPlan(r.planName, newRec.planName) &&
-        r.date === newRec.date
+        isMatchPlan(r.planName, newRec.planName)
     );
     let updated: ClosingPlanRecord[];
     if (existingIdx >= 0) {
@@ -1613,6 +1675,8 @@ export default function App() {
             <UpdateSales
               segments={storeSegments}
               items={storeItems}
+              closingRecords={storeClosingRecords}
+              adjustments={storeAdjustments}
               onUpdateSales={handleUpdateSales}
               onTransferPurpose={handleTransferPurpose}
               onOpenTransferModal={() => setIsTransferModalOpen(true)}
