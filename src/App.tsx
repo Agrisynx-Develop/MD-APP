@@ -511,6 +511,13 @@ export default function App() {
     const isSegment = segments.some((s) => s.id === planNameOrSegmentId);
     let updatedSegments: FabricationSegment[];
 
+    const isMatchPlan = (a?: string, b?: string) => {
+      if (!a || !b) return false;
+      const cleanA = a.toLowerCase().trim();
+      const cleanB = b.toLowerCase().trim();
+      return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+    };
+
     if (isSegment) {
       updatedSegments = segments.map((s) => {
         if (s.id === planNameOrSegmentId) {
@@ -528,7 +535,7 @@ export default function App() {
       updatedSegments = segments.map((s) => {
         const parentItem = items.find((i) => i.id === s.itemId);
         const plan = s.plannedFabrication || parentItem?.plannedFabrication;
-        if (plan === planNameOrSegmentId && (s.openingPurpose || 'UNTUK DISPLAY') === 'UNTUK DISPLAY') {
+        if (isMatchPlan(plan, planNameOrSegmentId) && (s.openingPurpose || 'UNTUK DISPLAY') === 'UNTUK DISPLAY') {
           const currentSales = s.salesKg || 0;
           return {
             ...s,
@@ -548,6 +555,147 @@ export default function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedSegments)
+    }).catch(console.error);
+
+    // ADAPTIVE RECALCULATION OF CLOSING RECORDS:
+    // Even if closing was already done, updating sales recalculates system stock and susut jual dynamically!
+    const effectiveStoreId = currentStore?.id || currentUser?.storeId || 'store_ckr';
+    const updatedClosingRecords = closingRecords.map((rec) => {
+      if (matchStoreEntity(rec.storeId, currentStore)) {
+        const planSegments = updatedSegments.filter((s) => isMatchPlan(s.plannedFabrication, rec.planName));
+        const totalPlanSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
+        const totalTersedia = rec.openingStockKg + rec.newProcessedKg + (rec.adjustInKg || 0) - (rec.adjustOutKg || 0);
+        const closingBySystem = Math.max(0, totalTersedia - totalPlanSales);
+        const susutJualKg = Math.max(0, closingBySystem - rec.actualClosingStockKg);
+
+        return {
+          ...rec,
+          salesKg: parseFloat(totalPlanSales.toFixed(3)),
+          closingStockBySystemKg: parseFloat(closingBySystem.toFixed(3)),
+          susutJualKg: parseFloat(susutJualKg.toFixed(3)),
+        };
+      }
+      return rec;
+    });
+
+    setClosingRecords(updatedClosingRecords);
+    saveClosingPlanRecords(updatedClosingRecords);
+    updateTableInSheets('closing_plan_records', updatedClosingRecords);
+
+    fetch('/api/closing-records', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedClosingRecords)
+    }).catch(console.error);
+  };
+
+  // Handler: Daily Closing Refresh & Carryover (Sisa Fisik Jadi Stok Awal Besok)
+  const handleDailyResetAndCarryover = () => {
+    const effectiveStoreId = currentStore?.id || currentUser?.storeId || 'store_ckr';
+    const storeClosings = closingRecords.filter((r) => matchStoreEntity(r.storeId, currentStore));
+    const storeSegs = segments.filter((s) => matchStoreEntity(s.storeId, currentStore));
+    const storeItms = items.filter((i) => matchStoreEntity(i.storeId, currentStore));
+
+    const isMatchPlan = (a?: string, b?: string) => {
+      if (!a || !b) return false;
+      const cleanA = a.toLowerCase().trim();
+      const cleanB = b.toLowerCase().trim();
+      return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+    };
+
+    // 1. Generate carryover thawing items from actual closing physical stock
+    const carryoverItems: ThawingItem[] = [];
+
+    // From closing records with physical stock > 0
+    storeClosings.forEach((rec) => {
+      if (rec.actualClosingStockKg > 0) {
+        carryoverItems.push({
+          id: `meat_carry_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          name: `${rec.planName} (Sisa Kemarin)`,
+          weightBeforeThawing: rec.actualClosingStockKg,
+          weightAfterThawing: rec.actualClosingStockKg,
+          shrinkageThawingPercent: 0,
+          thawingStartTime: new Date().toISOString(),
+          thawingEndTime: new Date().toISOString(),
+          status: 'pabrikasi_done',
+          plannedFabrication: rec.planName,
+          pabrikasiCategory: rec.category || 'DAGING FRESH',
+          openingPurpose: 'UNTUK DISPLAY',
+          isCarryover: true,
+          isTransferred: false,
+          createdAt: new Date().toISOString(),
+          storeId: effectiveStoreId,
+          butcherName: currentUser?.fullName || 'Butcher',
+          image: rec.photoUrl || '',
+        });
+      }
+    });
+
+    // Also include any segments that had actual weight > 0 if not covered in closing records
+    storeSegs.forEach((seg) => {
+      const parent = storeItms.find((i) => i.id === seg.itemId);
+      const planName = seg.plannedFabrication || parent?.plannedFabrication || seg.segmentName;
+      const alreadyHandled = storeClosings.some((c) => isMatchPlan(c.planName, planName));
+
+      if (!alreadyHandled && seg.actualWeight > 0) {
+        carryoverItems.push({
+          id: `meat_carry_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          name: `${seg.segmentName} (Sisa Kemarin)`,
+          weightBeforeThawing: seg.actualWeight,
+          weightAfterThawing: seg.actualWeight,
+          shrinkageThawingPercent: 0,
+          thawingStartTime: new Date().toISOString(),
+          thawingEndTime: new Date().toISOString(),
+          status: 'pabrikasi_done',
+          plannedFabrication: planName,
+          pabrikasiCategory: 'DAGING FRESH',
+          openingPurpose: seg.openingPurpose || 'UNTUK DISPLAY',
+          isCarryover: true,
+          isTransferred: false,
+          createdAt: new Date().toISOString(),
+          storeId: effectiveStoreId,
+          butcherName: currentUser?.fullName || 'Butcher',
+          image: '',
+        });
+      }
+    });
+
+    // 2. Keep items of other stores, replace this store's items with carryover items
+    const otherStoreItems = items.filter((i) => !matchStoreEntity(i.storeId, currentStore));
+    const newItems = [...otherStoreItems, ...carryoverItems];
+    setItems(newItems);
+    saveThawingItems(newItems);
+    updateTableInSheets('thawing_items', newItems);
+
+    // 3. Clear today's segments for this store, keep other stores
+    const otherStoreSegments = segments.filter((s) => !matchStoreEntity(s.storeId, currentStore));
+    setSegments(otherStoreSegments);
+    saveFabricationSegments(otherStoreSegments);
+    updateTableInSheets('fabrication_segments', otherStoreSegments);
+
+    // 4. Reset today's active closing records for this store to allow fresh closing tomorrow
+    const otherStoreClosings = closingRecords.filter((r) => !matchStoreEntity(r.storeId, currentStore));
+    setClosingRecords(otherStoreClosings);
+    saveClosingPlanRecords(otherStoreClosings);
+    updateTableInSheets('closing_plan_records', otherStoreClosings);
+
+    // 5. Sync to backend API
+    fetch('/api/thawing-items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newItems),
+    }).catch(console.error);
+
+    fetch('/api/fabrication-segments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(otherStoreSegments),
+    }).catch(console.error);
+
+    fetch('/api/closing-records', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(otherStoreClosings),
     }).catch(console.error);
   };
 
@@ -1448,6 +1596,7 @@ export default function App() {
               adjustments={storeAdjustments}
               onSaveClosingRecord={handleSaveClosingRecord}
               existingClosingRecords={storeClosingRecords}
+              onDailyResetAndCarryover={handleDailyResetAndCarryover}
             />
           )}
 
@@ -1481,6 +1630,7 @@ export default function App() {
               items={storeItems}
               segments={storeSegments}
               reports={storeReports}
+              closingRecords={storeClosingRecords}
               currentStore={currentStore}
               onCloseDay={handleSaveDailyReport}
             />
