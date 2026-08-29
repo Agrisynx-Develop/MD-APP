@@ -26,6 +26,43 @@ const STORAGE_KEY_URL = 'google_sheets_apps_script_url';
 const STORAGE_KEY_LAST_SYNC = 'google_sheets_last_sync_time';
 
 /**
+ * Normalizes table names to match Google Spreadsheet tab names
+ */
+export function normalizeSheetTableName(table: string): string {
+  const map: Record<string, string> = {
+    thawing_items: 'Thawing_Daging',
+    Thawing_Daging: 'Thawing_Daging',
+    thawingItems: 'Thawing_Daging',
+    fabrication_segments: 'Pabrikasi_Segmen',
+    Pabrikasi_Segmen: 'Pabrikasi_Segmen',
+    fabricationSegments: 'Pabrikasi_Segmen',
+    closing_plan_records: 'Closing_Fisik',
+    Closing_Fisik: 'Closing_Fisik',
+    closingPlanRecords: 'Closing_Fisik',
+    daily_closing_reports: 'Laporan_Closing',
+    Laporan_Closing: 'Laporan_Closing',
+    dailyClosingReports: 'Laporan_Closing',
+    daily_reports: 'Laporan_Closing',
+    stock_adjustments: 'Koreksi_Stok',
+    Koreksi_Stok: 'Koreksi_Stok',
+    stockAdjustments: 'Koreksi_Stok',
+    stores: 'Toko_Cabang',
+    stores_list: 'Toko_Cabang',
+    Toko_Cabang: 'Toko_Cabang',
+    users: 'Pengguna',
+    users_list: 'Pengguna',
+    Pengguna: 'Pengguna',
+    cogs_master: 'Master_COGS',
+    cogsMaster: 'Master_COGS',
+    Master_COGS: 'Master_COGS',
+    loss_config: 'Loss_Config',
+    lossConfig: 'Loss_Config',
+    Loss_Config: 'Loss_Config',
+  };
+  return map[table] || table;
+}
+
+/**
  * Get configured Google Apps Script Web App URL
  */
 export function getGoogleAppsScriptUrl(): string {
@@ -222,7 +259,7 @@ export async function postToSheets(payload: any): Promise<boolean> {
 export async function upsertRecordToSheets(table: string, record: any): Promise<boolean> {
   return postToSheets({
     action: 'upsertRecord',
-    table,
+    table: normalizeSheetTableName(table),
     record,
     timestamp: new Date().toISOString()
   });
@@ -234,7 +271,7 @@ export async function upsertRecordToSheets(table: string, record: any): Promise<
 export async function deleteRecordFromSheets(table: string, recordId: string): Promise<boolean> {
   return postToSheets({
     action: 'deleteRecord',
-    table,
+    table: normalizeSheetTableName(table),
     id: recordId,
     timestamp: new Date().toISOString()
   });
@@ -246,7 +283,7 @@ export async function deleteRecordFromSheets(table: string, recordId: string): P
 export async function updateTableInSheets(table: string, items: any[]): Promise<boolean> {
   return postToSheets({
     action: 'updateTable',
-    table,
+    table: normalizeSheetTableName(table),
     items,
     timestamp: new Date().toISOString()
   });
