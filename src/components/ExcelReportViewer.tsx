@@ -336,10 +336,12 @@ export default function ExcelReportViewer({
     else if (cut.category === 'DAGING PREMIUM') liveHasil = dgPremHasil;
     else if (cut.category === 'RAWON') liveHasil = rawonHasil;
 
-    const sAwal = rec ? rec.openingStockKg : 0;
-    const sHasil = rec && rec.newProcessedKg > 0 ? rec.newProcessedKg : liveHasil;
-    const sSales = rec ? rec.salesKg : 0;
-    const sReal = rec ? rec.actualClosingStockKg : 0;
+    const sAwal = rec && typeof rec.openingStockKg === 'number' && !isNaN(rec.openingStockKg) ? rec.openingStockKg : 0;
+    const sHasil = rec && typeof rec.newProcessedKg === 'number' && !isNaN(rec.newProcessedKg) && rec.newProcessedKg > 0
+      ? rec.newProcessedKg
+      : (typeof liveHasil === 'number' && !isNaN(liveHasil) ? liveHasil : 0);
+    const sSales = rec && typeof rec.salesKg === 'number' && !isNaN(rec.salesKg) ? rec.salesKg : 0;
+    const sReal = rec && typeof rec.actualClosingStockKg === 'number' && !isNaN(rec.actualClosingStockKg) ? rec.actualClosingStockKg : 0;
     const sTotalReal = sAwal + sHasil;
     const sSistem = Math.max(0, sTotalReal - sSales);
     const sSusut = Math.max(0, sSistem - sReal);
@@ -367,13 +369,13 @@ export default function ExcelReportViewer({
     };
   });
 
-  const sumStokAwal = dynamicSalesRows.reduce((s, r) => s + (typeof r.stokAwal === 'number' ? r.stokAwal : 0), 0);
-  const sumHasil = dynamicSalesRows.reduce((s, r) => s + (typeof r.hasil === 'number' ? r.hasil : 0), 0);
-  const sumTotalReal = dynamicSalesRows.reduce((s, r) => s + (typeof r.totalReal === 'number' ? r.totalReal : 0), 0);
-  const sumSales = dynamicSalesRows.reduce((s, r) => s + (typeof r.sales === 'number' ? r.sales : 0), 0);
-  const sumStokSistem = dynamicSalesRows.reduce((s, r) => s + (typeof r.stokSistem === 'number' ? r.stokSistem : 0), 0);
-  const sumStokReal = dynamicSalesRows.reduce((s, r) => s + (typeof r.stokReal === 'number' ? r.stokReal : 0), 0);
-  const sumSusut = dynamicSalesRows.reduce((s, r) => s + (typeof r.susut === 'number' ? r.susut : 0), 0);
+  const sumStokAwal = dynamicSalesRows.reduce((s, r) => s + (typeof r.stokAwal === 'number' && !isNaN(r.stokAwal) ? r.stokAwal : 0), 0);
+  const sumHasil = dynamicSalesRows.reduce((s, r) => s + (typeof r.hasil === 'number' && !isNaN(r.hasil) ? r.hasil : 0), 0);
+  const sumTotalReal = dynamicSalesRows.reduce((s, r) => s + (typeof r.totalReal === 'number' && !isNaN(r.totalReal) ? r.totalReal : 0), 0);
+  const sumSales = dynamicSalesRows.reduce((s, r) => s + (typeof r.sales === 'number' && !isNaN(r.sales) ? r.sales : 0), 0);
+  const sumStokSistem = dynamicSalesRows.reduce((s, r) => s + (typeof r.stokSistem === 'number' && !isNaN(r.stokSistem) ? r.stokSistem : 0), 0);
+  const sumStokReal = dynamicSalesRows.reduce((s, r) => s + (typeof r.stokReal === 'number' && !isNaN(r.stokReal) ? r.stokReal : 0), 0);
+  const sumSusut = dynamicSalesRows.reduce((s, r) => s + (typeof r.susut === 'number' && !isNaN(r.susut) ? r.susut : 0), 0);
 
   const handleCellClick = (cellRef: string, formula: string) => {
     setSelectedCell(cellRef);
