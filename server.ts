@@ -204,13 +204,36 @@ async function initDatabaseTables() {
           store_id TEXT NOT NULL,
           plan_name TEXT NOT NULL,
           date TEXT NOT NULL,
-          display_closing_kg REAL NOT NULL,
-          pesanan_closing_kg REAL NOT NULL,
-          total_physical_closing_kg REAL NOT NULL,
-          photo_display_url TEXT,
-          photo_pesanan_url TEXT,
+          category TEXT DEFAULT '',
+          opening_stock_kg REAL DEFAULT 0,
+          new_processed_kg REAL DEFAULT 0,
+          sales_kg REAL DEFAULT 0,
+          adjust_in_kg REAL DEFAULT 0,
+          adjust_out_kg REAL DEFAULT 0,
+          closing_stock_by_system_kg REAL DEFAULT 0,
+          actual_closing_stock_kg REAL DEFAULT 0,
+          susut_jual_kg REAL DEFAULT 0,
+          photo_url TEXT,
+          photo_caption TEXT,
+          note TEXT,
+          butcher_name TEXT,
           timestamp TEXT NOT NULL
         );
+
+        -- Ensure modern columns exist in closing_plan_records table
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS category TEXT DEFAULT '';
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS opening_stock_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS new_processed_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS sales_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS adjust_in_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS adjust_out_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS closing_stock_by_system_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS actual_closing_stock_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS susut_jual_kg REAL DEFAULT 0;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS photo_url TEXT;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS photo_caption TEXT;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS note TEXT;
+        ALTER TABLE closing_plan_records ADD COLUMN IF NOT EXISTS butcher_name TEXT;
 
         CREATE TABLE IF NOT EXISTS daily_closing_reports (
           id TEXT PRIMARY KEY,
@@ -290,7 +313,7 @@ async function initDatabaseTables() {
 
 async function startServer() {
   const app = express();
-  const PORT = 3001;
+  const PORT = 3000;
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -492,13 +515,21 @@ async function startServer() {
       return {
         id: clean.id || `close_${Date.now()}`,
         storeId: clean.storeId || 'store_ckr',
-        planName: clean.planName || '',
         date: clean.date || new Date().toISOString().split('T')[0],
-        displayClosingKg: Number(clean.displayClosingKg) || 0,
-        pesananClosingKg: Number(clean.pesananClosingKg) || 0,
-        totalPhysicalClosingKg: Number(clean.totalPhysicalClosingKg) || (Number(clean.displayClosingKg) || 0) + (Number(clean.pesananClosingKg) || 0),
-        photoDisplayUrl: clean.photoDisplayUrl ? 'Foto Display Terlampir' : '',
-        photoPesananUrl: clean.photoPesananUrl ? 'Foto Pesanan Terlampir' : '',
+        planName: clean.planName || '',
+        category: clean.category || 'DAGING FRESH',
+        openingStockKg: Number(clean.openingStockKg) || 0,
+        newProcessedKg: Number(clean.newProcessedKg) || 0,
+        salesKg: Number(clean.salesKg) || 0,
+        adjustInKg: Number(clean.adjustInKg) || 0,
+        adjustOutKg: Number(clean.adjustOutKg) || 0,
+        closingStockBySystemKg: Number(clean.closingStockBySystemKg) || 0,
+        actualClosingStockKg: Number(clean.actualClosingStockKg) || 0,
+        susutJualKg: Number(clean.susutJualKg) || 0,
+        photoUrl: clean.photoUrl ? 'Foto Timbangan Terlampir' : '',
+        photoCaption: clean.photoCaption || '',
+        note: clean.note || '',
+        butcherName: clean.butcherName || 'Butcher TDN',
         timestamp: formatDateTime(clean.timestamp || new Date().toISOString()),
       };
     }
@@ -1105,11 +1136,19 @@ async function startServer() {
       try {
         let query = `
           SELECT id, store_id as "storeId", plan_name as "planName", date,
-                 display_closing_kg as "displayClosingKg",
-                 pesanan_closing_kg as "pesananClosingKg",
-                 total_physical_closing_kg as "totalPhysicalClosingKg",
-                 photo_display_url as "photoDisplayUrl",
-                 photo_pesanan_url as "photoPesananUrl",
+                 category,
+                 opening_stock_kg as "openingStockKg",
+                 new_processed_kg as "newProcessedKg",
+                 sales_kg as "salesKg",
+                 adjust_in_kg as "adjustInKg",
+                 adjust_out_kg as "adjustOutKg",
+                 closing_stock_by_system_kg as "closingStockBySystemKg",
+                 actual_closing_stock_kg as "actualClosingStockKg",
+                 susut_jual_kg as "susutJualKg",
+                 photo_url as "photoUrl",
+                 photo_caption as "photoCaption",
+                 note,
+                 butcher_name as "butcherName",
                  timestamp
           FROM closing_plan_records
         `;
@@ -1120,7 +1159,9 @@ async function startServer() {
         }
         query += ` ORDER BY timestamp DESC`;
         const result = await p.query(query, params);
-        return res.json(result.rows);
+        if (result.rows.length > 0) {
+          return res.json(result.rows);
+        }
       } catch (err) {
         console.warn('Postgres fetch closing records error:', err);
       }
@@ -1138,17 +1179,35 @@ async function startServer() {
           for (const r of records) {
             await p.query(
               `INSERT INTO closing_plan_records (
-                id, store_id, plan_name, date, display_closing_kg, pesanan_closing_kg,
-                total_physical_closing_kg, photo_display_url, photo_pesanan_url, timestamp
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                id, store_id, plan_name, date, category,
+                opening_stock_kg, new_processed_kg, sales_kg, adjust_in_kg, adjust_out_kg,
+                closing_stock_by_system_kg, actual_closing_stock_kg, susut_jual_kg,
+                photo_url, photo_caption, note, butcher_name, timestamp
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
               ON CONFLICT (id) DO UPDATE SET
-                display_closing_kg = $5, pesanan_closing_kg = $6, total_physical_closing_kg = $7,
-                photo_display_url = $8, photo_pesanan_url = $9`,
+                opening_stock_kg = $6, new_processed_kg = $7, sales_kg = $8,
+                adjust_in_kg = $9, adjust_out_kg = $10, closing_stock_by_system_kg = $11,
+                actual_closing_stock_kg = $12, susut_jual_kg = $13,
+                photo_url = $14, photo_caption = $15, note = $16, butcher_name = $17, timestamp = $18`,
               [
-                r.id, r.storeId || '1', r.planName, r.date,
-                r.displayClosingKg || 0, r.pesananClosingKg || 0,
-                r.totalPhysicalClosingKg || 0, r.photoDisplayUrl || null,
-                r.photoPesananUrl || null, r.timestamp || new Date().toISOString()
+                r.id || `cpr_${Date.now()}`,
+                r.storeId || '1',
+                r.planName || '',
+                r.date || new Date().toISOString().split('T')[0],
+                r.category || 'DAGING FRESH',
+                Number(r.openingStockKg) || 0,
+                Number(r.newProcessedKg) || 0,
+                Number(r.salesKg) || 0,
+                Number(r.adjustInKg) || 0,
+                Number(r.adjustOutKg) || 0,
+                Number(r.closingStockBySystemKg) || 0,
+                Number(r.actualClosingStockKg) || 0,
+                Number(r.susutJualKg) || 0,
+                r.photoUrl || null,
+                r.photoCaption || null,
+                r.note || '',
+                r.butcherName || 'Butcher',
+                r.timestamp || new Date().toISOString()
               ]
             );
           }
@@ -1160,7 +1219,7 @@ async function startServer() {
         inMemoryStore.closingPlanRecords = req.body;
       } else {
         const r = req.body;
-        const idx = inMemoryStore.closingPlanRecords.findIndex((item) => item.id === r.id);
+        const idx = inMemoryStore.closingPlanRecords.findIndex((item) => item.id === r.id || (item.storeId === r.storeId && item.planName === r.planName && item.date === r.date));
         if (idx >= 0) {
           inMemoryStore.closingPlanRecords[idx] = { ...inMemoryStore.closingPlanRecords[idx], ...r };
         } else {
