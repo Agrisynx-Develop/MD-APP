@@ -79,20 +79,36 @@ export function isMatchPlan(a?: string, b?: string): boolean {
   const normB = normalizePlanName(cleanB);
   if (normA === normB) return true;
 
-  if (normA.length >= 4 && normB.length >= 4) {
+  // Distinct plan discrimination:
+  const isFriboyA = normA.includes('friboy') || normA.includes('prem2');
+  const isFriboyB = normB.includes('friboy') || normB.includes('prem2');
+  if (isFriboyA !== isFriboyB) return false;
+
+  const isShankleA = normA.includes('shank') || normA.includes('shankle');
+  const isShankleB = normB.includes('shank') || normB.includes('shankle');
+  if (isShankleA !== isShankleB) return false;
+
+  const isMemberA = normA.includes('member');
+  const isMemberB = normB.includes('member');
+  if (isMemberA !== isMemberB) return false;
+
+  const isRawonA = normA.includes('rawon');
+  const isRawonB = normB.includes('rawon');
+  if (isRawonA !== isRawonB) return false;
+
+  // Rendang alias check (e.g. 'rdang' <-> 'rendang')
+  const isRendangA = normA.includes('rdang') || normA.includes('rendang');
+  const isRendangB = normB.includes('rdang') || normB.includes('rendang');
+  if (isRendangA && isRendangB && !isShankleA && !isMemberA) return true;
+
+  // Premium alias check (e.g. 'prem' <-> 'premium')
+  const isPremA = normA.includes('prem') || normA.includes('premium');
+  const isPremB = normB.includes('prem') || normB.includes('premium');
+  if (isPremA && isPremB && !isFriboyA) return true;
+
+  if (normA.length >= 6 && normB.length >= 6) {
     if (normA.includes(normB) || normB.includes(normA)) return true;
   }
-
-  // Handle common aliases (e.g., 'rdang' <-> 'rendang', 'prem' <-> 'premium', 'friboy')
-  if ((normA.includes('rdang') || normA.includes('rendang')) && (normB.includes('rdang') || normB.includes('rendang'))) {
-    const isShankleA = normA.includes('shank') || normA.includes('shankle');
-    const isShankleB = normB.includes('shank') || normB.includes('shankle');
-    if (isShankleA === isShankleB) return true;
-  }
-
-  if (normA.includes('rawon') && normB.includes('rawon')) return true;
-  if (normA.includes('friboy') && normB.includes('friboy')) return true;
-  if (normA.includes('shank') && normB.includes('shank')) return true;
 
   return false;
 }
