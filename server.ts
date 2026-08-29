@@ -1384,7 +1384,7 @@ async function startServer() {
       inMemoryStore.dailyClosingReports = [];
       res.json({ success: true, message: 'Database reset successfully' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err.message }); 
     }
   });
 
