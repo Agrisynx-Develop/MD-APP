@@ -3,27 +3,29 @@ import {
   ThawingItem,
   FabricationSegment,
   ClosingPlanRecord,
+  StockAdjustment,
   UserAccount,
-  Store,
-  StockAdjustment
+  Store
 } from '../types';
+import { processHighResImage } from '../utils/imageCompressor';
 import {
   CheckSquare,
   Scale,
   Camera,
-  Upload,
-  CheckCircle2,
   AlertCircle,
-  AlertTriangle,
-  FileCheck,
-  Image as ImageIcon,
-  Save,
+  CheckCircle2,
+  Lock,
   Clock,
   ArrowRight,
-  TrendingDown,
-  Layers,
-  Sparkles,
-  Info
+  Upload,
+  Loader2,
+  Save,
+  FileCheck,
+  RefreshCw,
+  Eye,
+  X,
+  Info,
+  ShieldCheck
 } from 'lucide-react';
 
 interface ButcherClosingViewProps {
@@ -35,6 +37,7 @@ interface ButcherClosingViewProps {
   closingRecords?: ClosingPlanRecord[];
   existingClosingRecords?: ClosingPlanRecord[];
   onSaveClosingRecord: (record: Omit<ClosingPlanRecord, 'id' | 'timestamp'>) => void;
+  onDailyResetAndCarryover?: () => void;
 }
 
 export default function ButcherClosingView({
@@ -46,8 +49,18 @@ export default function ButcherClosingView({
   closingRecords = [],
   existingClosingRecords,
   onSaveClosingRecord,
+  onDailyResetAndCarryover,
 }: ButcherClosingViewProps) {
   const records = existingClosingRecords && existingClosingRecords.length > 0 ? existingClosingRecords : closingRecords;
+  
+  // Helper for matching plan name
+  const isPlanMatch = (a?: string, b?: string) => {
+    if (!a || !b) return false;
+    const cleanA = a.toLowerCase().trim();
+    const cleanB = b.toLowerCase().trim();
+    return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+  };
+
   // Standard Rencana Potong list
   const STANDARD_PLANS = [
     { name: 'D.sapi pot. rdang', category: 'DAGING FRESH', icon: '🥩' },
@@ -61,7 +74,7 @@ export default function ButcherClosingView({
   // Also include any dynamically added plans from items
   const allUniquePlans = [...STANDARD_PLANS];
   items.forEach((item) => {
-    if (item.plannedFabrication && !allUniquePlans.some((p) => p.name.toLowerCase() === item.plannedFabrication.toLowerCase())) {
+    if (item.plannedFabrication && !allUniquePlans.some((p) => isPlanMatch(p.name, item.plannedFabrication))) {
       allUniquePlans.push({
         name: item.plannedFabrication,
         category: (item.pabrikasiCategory || 'DAGING FRESH') as string,
@@ -70,37 +83,118 @@ export default function ButcherClosingView({
     }
   });
 
-  // Modal State for Closing specific plan
+  // Modal State for Active Input
   const [selectedPlan, setSelectedPlan] = useState<typeof STANDARD_PLANS[0] | null>(null);
   const [physicalWeight, setPhysicalWeight] = useState('');
   const [closingPhoto, setClosingPhoto] = useState('');
   const [closingNote, setClosingNote] = useState('');
+  const [isOptimizingPhoto, setIsOptimizingPhoto] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Handle opening modal for a plan
+  // Modal State for Viewing Locked Plan Details
+  const [viewLockedPlan, setViewLockedPlan] = useState<{
+    plan: typeof STANDARD_PLANS[0];
+    record: ClosingPlanRecord;
+    openingKg: number;
+    processedKg: number;
+    adjIn: number;
+    adjOut: number;
+    totalTersedia: number;
+    currentSales: number;
+    stokSistem: number;
+    susutJual: number;
+  } | null>(null);
+
+  // Confirmation Modal for Daily Reset / Carryover
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+
+  // Zoom photo modal
+  const [zoomedPhotoUrl, setZoomedPhotoUrl] = useState<string | null>(null);
+
+  // Parse input string safely with comma support (e.g. "0,5" -> 0.5)
+  const parseSafeFloat = (val: string): number => {
+    if (!val) return 0;
+    const clean = val.toString().replace(',', '.').trim();
+    const num = parseFloat(clean);
+    return isNaN(num) ? 0 : num;
+  };
+
+  // Handle opening active input modal for an unlocked plan
   const handleOpenClosingModal = (planObj: typeof STANDARD_PLANS[0]) => {
-    const safePlanName = (planObj.name || '').toLowerCase();
-    const existingRec = records.find(
-      (r) => (r.planName || '').toLowerCase() === safePlanName
-    );
+    const existingRec = records.find((r) => isPlanMatch(r.planName, planObj.name));
+
+    // If already closed, open locked read-only details instead
+    if (existingRec) {
+      handleOpenLockedDetails(planObj, existingRec);
+      return;
+    }
 
     setSelectedPlan(planObj);
-    setPhysicalWeight(existingRec ? existingRec.actualClosingStockKg.toString() : '');
-    setClosingPhoto(existingRec?.photoUrl || '');
-    setClosingNote(existingRec?.note || '');
+    setPhysicalWeight('');
+    setClosingPhoto('');
+    setClosingNote('');
     setErrorMsg('');
   };
 
-  // Handle Photo File Upload
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle opening locked details modal
+  const handleOpenLockedDetails = (planObj: typeof STANDARD_PLANS[0], record: ClosingPlanRecord) => {
+    const todayPlanItems = items.filter(
+      (i) => !i.isCarryover && isPlanMatch(i.plannedFabrication, planObj.name)
+    );
+    const carryoverPlanItems = items.filter(
+      (i) => i.isCarryover && isPlanMatch(i.plannedFabrication, planObj.name)
+    );
+    const planSegments = segments.filter(
+      (s) => isPlanMatch(s.plannedFabrication, planObj.name)
+    );
+    const planAdj = adjustments.filter((a) => isPlanMatch(a.planName, planObj.name));
+    const adjIn = planAdj.filter((a) => a.type === 'IN').reduce((sum, a) => sum + a.weightKg, 0);
+    const adjOut = planAdj.filter((a) => a.type === 'OUT').reduce((sum, a) => sum + a.weightKg, 0);
+
+    const openingKg = record.openingStockKg || carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0);
+    const processedKg = record.newProcessedKg || todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
+    const totalTersedia = openingKg + processedKg + adjIn - adjOut;
+    
+    // Adaptive sales from segments
+    const segmentSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
+    const currentSales = segmentSales > 0 ? segmentSales : record.salesKg;
+    const stokSistem = Math.max(0, totalTersedia - currentSales);
+    const susutJual = Math.max(0, stokSistem - record.actualClosingStockKg);
+
+    setViewLockedPlan({
+      plan: planObj,
+      record,
+      openingKg,
+      processedKg,
+      adjIn,
+      adjOut,
+      totalTersedia,
+      currentSales,
+      stokSistem,
+      susutJual,
+    });
+  };
+
+  // Handle Photo File Upload with High Resolution Support
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setClosingPhoto(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setIsOptimizingPhoto(true);
+      setErrorMsg('');
+      try {
+        const optimized = await processHighResImage(file, {
+          maxWidth: 1920,
+          maxHeight: 1920,
+          quality: 0.85,
+        });
+        setClosingPhoto(optimized);
+      } catch (err) {
+        console.error('Error optimizing photo:', err);
+        setErrorMsg('Gagal memproses resolusi foto. Coba pilih foto kembali.');
+      } finally {
+        setIsOptimizingPhoto(false);
+      }
     }
   };
 
@@ -109,8 +203,8 @@ export default function ButcherClosingView({
     e.preventDefault();
     if (!selectedPlan) return;
 
-    const actualStock = parseFloat(physicalWeight);
-    if (isNaN(actualStock) || actualStock < 0) {
+    const actualStock = parseSafeFloat(physicalWeight);
+    if (isNaN(actualStock) || actualStock < 0 || !physicalWeight.trim()) {
       setErrorMsg('Harap masukkan angka timbangan sisa stok fisik closing yang valid (≥ 0)!');
       return;
     }
@@ -121,40 +215,36 @@ export default function ButcherClosingView({
       return;
     }
 
-    // Retrieve sales for this plan from segments or existing record
-    const safeSelectedPlanName = (selectedPlan.name || '').toLowerCase();
-    const existingRec = records.find(
-      (r) => (r.planName || '').toLowerCase() === safeSelectedPlanName
-    );
-    const planSegments = segments.filter(
-      (s) => (s.plannedFabrication || '').toLowerCase().includes(safeSelectedPlanName)
-    );
+    // Retrieve sales for this plan from segments
+    const planSegments = segments.filter((s) => isPlanMatch(s.plannedFabrication, selectedPlan.name));
     const calculatedSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
-    const salesVal = existingRec ? existingRec.salesKg : calculatedSales;
 
     // Filter items processed today vs carryover
     const todayPlanItems = items.filter(
-      (i) => !i.isCarryover && (i.plannedFabrication || '').toLowerCase().includes(safeSelectedPlanName)
+      (i) => !i.isCarryover && isPlanMatch(i.plannedFabrication, selectedPlan.name)
     );
     const carryoverPlanItems = items.filter(
-      (i) => i.isCarryover && (i.plannedFabrication || '').toLowerCase().includes(safeSelectedPlanName)
+      (i) => i.isCarryover && isPlanMatch(i.plannedFabrication, selectedPlan.name)
     );
 
     // Adjustments for this plan
-    const planAdj = adjustments.filter(
-      (a) => (a.planName || '').toLowerCase().includes(safeSelectedPlanName)
-    );
+    const planAdj = adjustments.filter((a) => isPlanMatch(a.planName, selectedPlan.name));
     const adjIn = planAdj.filter((a) => a.type === 'IN').reduce((sum, a) => sum + a.weightKg, 0);
     const adjOut = planAdj.filter((a) => a.type === 'OUT').reduce((sum, a) => sum + a.weightKg, 0);
 
     const openingStockKg = carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0);
     const newProcessedKg = todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
     const totalTersedia = openingStockKg + newProcessedKg + adjIn - adjOut;
-    const closingBySystem = Math.max(0, totalTersedia - salesVal);
+    const closingBySystem = Math.max(0, totalTersedia - calculatedSales);
     const susutJualKg = Math.max(0, closingBySystem - actualStock);
 
+    const effectiveStoreId = currentStore?.id || currentUser.storeId || '1';
+
+    // Sanitize note
+    const sanitizedNote = closingNote.replace(/[<>]/g, '').trim();
+
     onSaveClosingRecord({
-      storeId: currentUser.storeId || 'store_ckr',
+      storeId: effectiveStoreId,
       date: new Date().toISOString().split('T')[0],
       planName: selectedPlan.name,
       category: selectedPlan.category,
@@ -162,19 +252,29 @@ export default function ButcherClosingView({
       newProcessedKg: parseFloat(newProcessedKg.toFixed(3)),
       adjustInKg: parseFloat(adjIn.toFixed(3)),
       adjustOutKg: parseFloat(adjOut.toFixed(3)),
-      salesKg: parseFloat(salesVal.toFixed(3)),
+      salesKg: parseFloat(calculatedSales.toFixed(3)),
       closingStockBySystemKg: parseFloat(closingBySystem.toFixed(3)),
       actualClosingStockKg: parseFloat(actualStock.toFixed(3)),
       susutJualKg: parseFloat(susutJualKg.toFixed(3)),
       photoUrl: closingPhoto,
       photoCaption: `Foto Timbangan Closing: ${selectedPlan.name}`,
-      note: closingNote.trim(),
+      note: sanitizedNote,
       butcherName: currentUser.fullName,
     });
 
-    setSuccessMsg(`Closing fisik untuk "${selectedPlan.name}" berhasil disimpan!`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    setSuccessMsg(`Closing fisik untuk "${selectedPlan.name}" berhasil disimpan & terlock sebagai Susut Jual (${susutJualKg.toFixed(3)} Kg)!`);
+    setTimeout(() => setSuccessMsg(''), 5000);
     setSelectedPlan(null);
+  };
+
+  // Perform daily reset and carryover
+  const handleConfirmResetAndCarryover = () => {
+    if (onDailyResetAndCarryover) {
+      onDailyResetAndCarryover();
+      setIsResetConfirmOpen(false);
+      setSuccessMsg('✓ Berhasil melakukan Refresh Closing Harian! Sisa stok fisik telah dipindahkan menjadi Stok Awal (Sisa Kemarin) untuk operasional hari besok.');
+      setTimeout(() => setSuccessMsg(''), 6000);
+    }
   };
 
   return (
@@ -195,46 +295,60 @@ export default function ButcherClosingView({
             Closing Fisik Per Rencana Potong
           </h1>
           <p className="text-xs text-red-200 mt-1">
-            Lakukan timbang fisik sisa daging di display/chiller untuk setiap rencana potong. <strong className="text-white">Upload foto bukti timbangan adalah MANDATORY (Wajib).</strong>
+            Timbang sisa fisik di chiller/display. Data yang sudah closing akan <strong>terlock</strong> sebagai susut jual dan sisa fisiknya otomatis menjadi <strong>stok awal hari besok</strong> saat refresh closing harian.
           </p>
         </div>
 
-        <div className="bg-red-950/70 border border-red-700/60 p-3 rounded-xl flex items-center gap-3 shrink-0">
-          <Camera className="w-5 h-5 text-red-300 animate-pulse" />
-          <div className="text-xs">
-            <span className="text-slate-300 block font-medium">Status Closing:</span>
-            <strong className="text-white font-bold">
-              {records.length} dari {allUniquePlans.length} Selesai
-            </strong>
+        <div className="flex items-center gap-3 shrink-0 flex-wrap">
+          <div className="bg-red-950/70 border border-red-700/60 p-3 rounded-xl flex items-center gap-3">
+            <Camera className="w-5 h-5 text-red-300 animate-pulse" />
+            <div className="text-xs">
+              <span className="text-slate-300 block font-medium">Status Closing:</span>
+              <strong className="text-white font-bold">
+                {records.length} dari {allUniquePlans.length} Selesai
+              </strong>
+            </div>
           </div>
+
+          {onDailyResetAndCarryover && (
+            <button
+              type="button"
+              onClick={() => setIsResetConfirmOpen(true)}
+              className="bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-extrabold px-3.5 py-3 rounded-xl shadow-sm transition flex items-center gap-2 cursor-pointer border border-amber-400/40"
+              title="Tutup siklus operasional hari ini dan jadikan sisa fisik timbangan sebagai Stok Awal hari besok"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Refresh Closing Harian (Carryover)</span>
+            </button>
+          )}
         </div>
       </div>
 
       {successMsg && (
-        <div className="p-4 bg-emerald-50 border-2 border-emerald-400 text-emerald-900 rounded-xl flex items-center gap-3 shadow-xs">
+        <div className="p-4 bg-emerald-50 border-2 border-emerald-400 text-emerald-900 rounded-xl flex items-center gap-3 shadow-xs animate-in fade-in duration-200">
           <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
           <span className="text-sm font-bold">{successMsg}</span>
         </div>
       )}
 
-      {/* Grid of Rencana Potong Cards (Similar to Antrian Thawing Layout) */}
+      {/* Grid of Rencana Potong Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {allUniquePlans.map((plan) => {
-          const safePName = (plan.name || '').toLowerCase();
-          const existingRec = records.find(
-            (r) => (r.planName || '').toLowerCase() === safePName
-          );
+          const existingRec = records.find((r) => isPlanMatch(r.planName, plan.name));
 
           // Get items for this plan
           const todayPlanItems = items.filter(
-            (i) => !i.isCarryover && (i.plannedFabrication || '').toLowerCase().includes(safePName)
+            (i) => !i.isCarryover && isPlanMatch(i.plannedFabrication, plan.name)
           );
           const carryoverPlanItems = items.filter(
-            (i) => i.isCarryover && (i.plannedFabrication || '').toLowerCase().includes(safePName)
+            (i) => i.isCarryover && isPlanMatch(i.plannedFabrication, plan.name)
           );
           const planSegments = segments.filter(
-            (s) => (s.plannedFabrication || '').toLowerCase().includes(safePName)
+            (s) => isPlanMatch(s.plannedFabrication, plan.name)
           );
+          const planAdj = adjustments.filter((a) => isPlanMatch(a.planName, plan.name));
+          const adjIn = planAdj.filter((a) => a.type === 'IN').reduce((sum, a) => sum + a.weightKg, 0);
+          const adjOut = planAdj.filter((a) => a.type === 'OUT').reduce((sum, a) => sum + a.weightKg, 0);
 
           const openingKg = existingRec
             ? existingRec.openingStockKg
@@ -242,16 +356,22 @@ export default function ButcherClosingView({
           const processedKg = existingRec
             ? existingRec.newProcessedKg
             : todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
-          const salesKg = existingRec
-            ? existingRec.salesKg
-            : planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
+          const totalTersedia = openingKg + processedKg + adjIn - adjOut;
+
+          // Adaptive Sales (recalculates whenever segments change)
+          const segmentSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
+          const salesKg = segmentSales > 0 ? segmentSales : (existingRec ? existingRec.salesKg : 0);
+          const stokSistem = Math.max(0, totalTersedia - salesKg);
+
+          // Susut Jual = (Stok Sistem - Sisa Fisik)
+          const susutJualKg = existingRec ? Math.max(0, stokSistem - existingRec.actualClosingStockKg) : 0;
 
           return (
             <div
               key={plan.name}
               className={`bg-white rounded-2xl border transition-all p-5 shadow-xs flex flex-col justify-between ${
                 existingRec
-                  ? 'border-emerald-300 bg-emerald-50/10'
+                  ? 'border-emerald-300 bg-emerald-50/15 ring-1 ring-emerald-200'
                   : 'border-slate-200 hover:border-red-400'
               }`}
             >
@@ -268,9 +388,9 @@ export default function ButcherClosingView({
                   </div>
 
                   {existingRec ? (
-                    <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-full text-[11px] font-bold flex items-center gap-1 shrink-0">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      Sudah Closing
+                    <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full text-[11px] font-extrabold flex items-center gap-1 shrink-0 shadow-2xs">
+                      <Lock className="w-3.5 h-3.5 text-emerald-700" />
+                      Terlock
                     </span>
                   ) : (
                     <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-[11px] font-bold flex items-center gap-1 shrink-0">
@@ -281,7 +401,7 @@ export default function ButcherClosingView({
                 </div>
 
                 {/* Metrics Breakdown Box */}
-                <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl text-xs border border-slate-100">
+                <div className="grid grid-cols-3 gap-1.5 bg-slate-50 p-2.5 rounded-xl text-xs border border-slate-100">
                   <div>
                     <span className="text-[10px] text-slate-500 block">Sisa Kemarin</span>
                     <strong className="text-slate-800 font-mono text-xs">{openingKg.toFixed(2)} Kg</strong>
@@ -290,41 +410,75 @@ export default function ButcherClosingView({
                     <span className="text-[10px] text-slate-500 block">Diolah Baru</span>
                     <strong className="text-red-700 font-mono text-xs">{processedKg.toFixed(2)} Kg</strong>
                   </div>
+                  <div>
+                    <span className="text-[10px] text-emerald-700 font-bold block">Sales Real</span>
+                    <strong className="text-emerald-700 font-mono text-xs">{salesKg.toFixed(2)} Kg</strong>
+                  </div>
                 </div>
 
-                {/* Sisa Stok Fisik Result (if closed) */}
-                {existingRec && (
-                  <div className="bg-emerald-50/80 border border-emerald-200 p-3 rounded-xl flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] text-emerald-700 font-semibold block">Timbangan Fisik Closing:</span>
-                      <span className="text-sm font-black text-emerald-900 font-mono">
-                        {existingRec.actualClosingStockKg.toFixed(3)} Kg
+                {/* Sisa Stok Fisik & Susut Jual Result (when closed) */}
+                {existingRec ? (
+                  <div className="bg-emerald-50/90 border border-emerald-300 p-3 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-emerald-800 font-semibold block">Timbangan Fisik Sisa:</span>
+                        <span className="text-base font-black text-emerald-950 font-mono">
+                          {existingRec.actualClosingStockKg.toFixed(3)} Kg
+                        </span>
+                      </div>
+                      {existingRec.photoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setZoomedPhotoUrl(existingRec.photoUrl)}
+                          className="w-12 h-12 rounded-lg overflow-hidden border-2 border-emerald-400 shadow-xs hover:opacity-90 cursor-pointer relative group"
+                          title="Klik untuk memperbesar foto HD"
+                        >
+                          <img src={existingRec.photoUrl} alt="Foto Closing" className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                            <Eye className="w-4 h-4 text-white" />
+                          </div>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="pt-2 border-t border-emerald-200 flex items-center justify-between text-xs">
+                      <span className="text-slate-600 font-medium">Susut Jual (Display):</span>
+                      <span className="font-mono font-black text-amber-800">
+                        {susutJualKg.toFixed(3)} Kg
                       </span>
                     </div>
-                    {existingRec.photoUrl && (
-                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-emerald-300 shadow-2xs">
-                        <img src={existingRec.photoUrl} alt="Foto Closing" className="w-full h-full object-cover" />
-                      </div>
-                    )}
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 border border-dashed border-slate-300 p-2.5 rounded-xl flex items-center justify-between text-xs text-slate-500">
+                    <span>Sisa Stok Sistem:</span>
+                    <strong className="text-blue-900 font-mono font-bold">{stokSistem.toFixed(2)} Kg</strong>
                   </div>
                 )}
               </div>
 
               {/* Action Button */}
               <div className="mt-4 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => handleOpenClosingModal(plan)}
-                  className={`w-full py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs ${
-                    existingRec
-                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300'
-                      : 'bg-red-700 hover:bg-red-800 text-white'
-                  }`}
-                >
-                  <Scale className="w-4 h-4" />
-                  <span>{existingRec ? 'Edit / Perbarui Closing' : 'Timbang & Closing Rencana Ini'}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
+                {existingRec ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenLockedDetails(plan, existingRec)}
+                    className="w-full py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs bg-emerald-100/80 hover:bg-emerald-200 text-emerald-900 border border-emerald-300"
+                  >
+                    <Lock className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Data Terkunci (Lihat Rincian)</span>
+                    <Eye className="w-3.5 h-3.5 ml-auto text-emerald-700" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenClosingModal(plan)}
+                    className="w-full py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs bg-red-700 hover:bg-red-800 active:scale-95 text-white"
+                  >
+                    <Scale className="w-4 h-4" />
+                    <span>Timbang & Closing Rencana Ini</span>
+                    <ArrowRight className="w-3.5 h-3.5 ml-auto" />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -337,123 +491,139 @@ export default function ButcherClosingView({
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
               <FileCheck className="w-4 h-4 text-red-700" />
-              Rekapitulasi Closing Fisik Butcher Hari Ini ({records.length})
+              Rekapitulasi Closing Fisik Terkunci Hari Ini ({records.length} Rencana)
             </h3>
-            <span className="text-[11px] text-slate-500">
-              Data otomatis terhubung ke Admin Toko & MD
+            <span className="text-xs text-slate-500 font-medium">
+              Tersimpan sebagai Susut Jual & Calon Stok Awal Besok
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold">
-                <tr>
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold border-b border-slate-200">
                   <th className="p-3">Rencana Potong</th>
-                  <th className="p-3">Kategori</th>
-                  <th className="p-3 text-right">Sisa Kemarin (Kg)</th>
-                  <th className="p-3 text-right">Bahan Diolah (Kg)</th>
-                  <th className="p-3 text-right bg-red-50 font-black text-red-950">Sisa Fisik Real (Kg)</th>
-                  <th className="p-3 text-right text-amber-700">Susut Jual (Kg)</th>
+                  <th className="p-3 text-right">Sisa Kemarin</th>
+                  <th className="p-3 text-right">Diolah Baru</th>
+                  <th className="p-3 text-right">Sales Real</th>
+                  <th className="p-3 text-right">Stok Sistem</th>
+                  <th className="p-3 text-right">Timbangan Fisik (Akhir)</th>
+                  <th className="p-3 text-right">Susut Jual (Kg)</th>
                   <th className="p-3 text-center">Foto Bukti</th>
-                  <th className="p-3">Petugas</th>
+                  <th className="p-3 text-center">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {records.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50">
-                    <td className="p-3 font-bold text-slate-900">{r.planName}</td>
-                    <td className="p-3 text-slate-600">{r.category}</td>
-                    <td className="p-3 text-right font-mono">{r.openingStockKg.toFixed(3)}</td>
-                    <td className="p-3 text-right font-mono font-semibold">{r.newProcessedKg.toFixed(3)}</td>
-                    <td className="p-3 text-right font-mono font-black text-red-950 bg-red-50">
-                      {r.actualClosingStockKg.toFixed(3)} Kg
-                    </td>
-                    <td className="p-3 text-right font-mono text-amber-700 font-semibold">{r.susutJualKg.toFixed(3)}</td>
-                    <td className="p-3 text-center">
-                      {r.photoUrl ? (
-                        <a
-                          href={r.photoUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline font-bold"
-                        >
-                          <ImageIcon className="w-3.5 h-3.5" /> Lihat Foto
-                        </a>
-                      ) : (
-                        <span className="text-red-500 font-bold">Tidak Ada</span>
-                      )}
-                    </td>
-                    <td className="p-3 text-slate-700">{r.butcherName}</td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-slate-100 text-slate-800">
+                {records.map((r) => {
+                  const matchingPlanObj = allUniquePlans.find((p) => isPlanMatch(p.name, r.planName));
+                  const planSegs = segments.filter((s) => isPlanMatch(s.plannedFabrication, r.planName));
+                  const realSales = planSegs.reduce((sum, s) => sum + (s.salesKg || 0), 0) || r.salesKg;
+                  const totalTersedia = r.openingStockKg + r.newProcessedKg + (r.adjustInKg || 0) - (r.adjustOutKg || 0);
+                  const dynamicStokSistem = Math.max(0, totalTersedia - realSales);
+                  const dynamicSusut = Math.max(0, dynamicStokSistem - r.actualClosingStockKg);
+
+                  return (
+                    <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="p-3 font-bold text-slate-900 flex items-center gap-1.5">
+                        <span>{matchingPlanObj?.icon || '🥩'}</span>
+                        <span>{r.planName}</span>
+                      </td>
+                      <td className="p-3 text-right font-mono">{r.openingStockKg.toFixed(2)} Kg</td>
+                      <td className="p-3 text-right font-mono text-red-700">{r.newProcessedKg.toFixed(2)} Kg</td>
+                      <td className="p-3 text-right font-mono text-emerald-700 font-semibold">{realSales.toFixed(2)} Kg</td>
+                      <td className="p-3 text-right font-mono text-blue-800 font-semibold">{dynamicStokSistem.toFixed(2)} Kg</td>
+                      <td className="p-3 text-right font-mono font-black text-emerald-950 bg-emerald-50/40">
+                        {r.actualClosingStockKg.toFixed(3)} Kg
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold text-amber-700">
+                        {dynamicSusut.toFixed(3)} Kg
+                      </td>
+                      <td className="p-3 text-center">
+                        {r.photoUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => setZoomedPhotoUrl(r.photoUrl)}
+                            className="inline-block w-8 h-8 rounded-lg overflow-hidden border border-slate-300 hover:scale-105 transition shadow-2xs cursor-pointer"
+                            title="Klik perbesar foto"
+                          >
+                            <img src={r.photoUrl} alt="Foto" className="w-full h-full object-cover" />
+                          </button>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center justify-center gap-1">
+                          <Lock className="w-3 h-3 text-emerald-700" /> Terlock
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL: INPUT TIMBANGAN & MANDATORY FOTO CLOSING */}
-      {/* ========================================================================= */}
+      {/* --- ACTIVE CLOSING INPUT MODAL (FOR UNLOCKED PLANS) --- */}
       {selectedPlan && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-100 overflow-hidden my-6 animate-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="p-5 bg-gradient-to-r from-red-900 to-red-800 text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-red-700/60 rounded-xl border border-red-500/40">
-                  <CheckSquare className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-base">Closing Rencana Potong</h3>
-                  <p className="text-xs text-red-200">{selectedPlan.name} ({selectedPlan.category})</p>
-                </div>
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 my-8 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-100 text-red-800">
+                  Input Closing Fisik Butcher
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-1 flex items-center gap-2">
+                  <span>{selectedPlan.icon}</span>
+                  <span>{selectedPlan.name}</span>
+                </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedPlan(null)}
-                className="text-red-200 hover:text-white text-lg font-bold p-1 cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 cursor-pointer"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <form onSubmit={handleSubmitClosing} className="p-6 space-y-4">
-              {errorMsg && (
-                <div className="p-3.5 bg-red-50 text-red-800 text-xs rounded-xl border border-red-200 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                  <span className="font-bold">{errorMsg}</span>
-                </div>
-              )}
+            {errorMsg && (
+              <div className="p-3 bg-red-50 border border-red-300 text-red-900 rounded-xl flex items-center gap-2 text-xs font-bold">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
 
-              <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+            <form onSubmit={handleSubmitClosing} className="space-y-4">
+              {/* Instructions */}
+              <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2">
                 <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                 <div>
-                  <strong>Petunjuk Butcher:</strong>
-                  <p className="text-slate-600 mt-0.5">
-                    Timbang seluruh sisa daging untuk rencana <strong>"{selectedPlan.name}"</strong> di chiller/display, lalu upload foto timbangan fisik real sebagai bukti wajib.
-                  </p>
+                  <strong className="block font-bold">Petunjuk Butcher:</strong>
+                  Timbang seluruh sisa daging untuk rencana &quot;{selectedPlan.name}&quot; di chiller/display, lalu upload foto timbangan fisik real sebagai bukti wajib. Setelah disimpan, data akan <strong>terkunci</strong> sebagai susut jual.
                 </div>
               </div>
 
               {/* Live Calculation Preview Card */}
               {(() => {
                 const safeSelName = (selectedPlan.name || '').toLowerCase();
-                const selectedPlanRec = records.find(r => (r.planName || '').toLowerCase() === safeSelName);
                 const selectedPlanTodayItems = items.filter(i => !i.isCarryover && (i.plannedFabrication || '').toLowerCase().includes(safeSelName));
                 const selectedPlanCarryoverItems = items.filter(i => i.isCarryover && (i.plannedFabrication || '').toLowerCase().includes(safeSelName));
                 const selectedPlanSegments = segments.filter(s => (s.plannedFabrication || '').toLowerCase().includes(safeSelName));
                 const selectedPlanAdj = adjustments.filter(a => (a.planName || '').toLowerCase().includes(safeSelName));
 
-                const modalOpening = selectedPlanRec ? selectedPlanRec.openingStockKg : selectedPlanCarryoverItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0);
-                const modalProcessed = selectedPlanRec ? selectedPlanRec.newProcessedKg : selectedPlanTodayItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
+                const modalOpening = selectedPlanCarryoverItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0);
+                const modalProcessed = selectedPlanTodayItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
                 const modalAdjIn = selectedPlanAdj.filter(a => a.type === 'IN').reduce((sum, a) => sum + a.weightKg, 0);
                 const modalAdjOut = selectedPlanAdj.filter(a => a.type === 'OUT').reduce((sum, a) => sum + a.weightKg, 0);
                 const modalTotalTersedia = modalOpening + modalProcessed + modalAdjIn - modalAdjOut;
-                const modalSales = selectedPlanRec ? selectedPlanRec.salesKg : selectedPlanSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
+                const modalSales = selectedPlanSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
                 const modalStokSistem = Math.max(0, modalTotalTersedia - modalSales);
-                const modalInputWeight = parseFloat(physicalWeight) || 0;
+                
+                // Comma-safe parse
+                const modalInputWeight = parseSafeFloat(physicalWeight);
                 const modalLiveSusut = physicalWeight ? Math.max(0, modalStokSistem - modalInputWeight) : 0;
 
                 return (
@@ -491,19 +661,19 @@ export default function ButcherClosingView({
                 );
               })()}
 
-              {/* Timbangan Sisa Stok Fisik */}
+              {/* Timbangan Sisa Stok Fisik (Supports comma & dot) */}
               <div>
                 <label className="block text-xs font-extrabold text-slate-800 mb-1">
                   Timbangan Sisa Stok Fisik Akhir (Kg) *
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    step="0.001"
+                    type="text"
+                    inputMode="decimal"
                     autoFocus
-                    placeholder="Contoh: 136.881"
+                    placeholder="Contoh: 19.450 atau 0,5"
                     value={physicalWeight}
-                    onChange={(e) => setPhysicalWeight(e.target.value)}
+                    onChange={(e) => setPhysicalWeight(e.target.value.replace(/[^0-9.,]/g, ''))}
                     className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-300 focus:border-red-600 rounded-xl focus:bg-white focus:outline-hidden text-slate-900 text-lg font-black"
                     required
                   />
@@ -528,9 +698,15 @@ export default function ButcherClosingView({
                     type="file"
                     accept="image/*"
                     onChange={handlePhotoUpload}
+                    disabled={isOptimizingPhoto}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   />
-                  {closingPhoto ? (
+                  {isOptimizingPhoto ? (
+                    <div className="py-6 flex flex-col items-center justify-center gap-2">
+                      <Loader2 className="w-8 h-8 text-red-600 animate-spin" />
+                      <p className="text-xs font-bold text-red-900">Memproses resolusi tinggi foto timbangan...</p>
+                    </div>
+                  ) : closingPhoto ? (
                     <div className="space-y-2">
                       <img
                         src={closingPhoto}
@@ -538,14 +714,14 @@ export default function ButcherClosingView({
                         className="h-28 w-auto mx-auto object-cover rounded-xl shadow-sm border border-red-300"
                       />
                       <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Foto Berhasil Dipilih (Ketuk untuk ganti)
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Foto Resolusi HD Siap (Ketuk untuk ganti)
                       </span>
                     </div>
                   ) : (
                     <div className="py-3 space-y-1">
                       <Upload className="w-8 h-8 text-red-500 mx-auto mb-1" />
                       <p className="text-xs font-bold text-red-950">
-                        Ketuk untuk Ambil Foto Kamera / Unggah File
+                        Ketuk untuk Ambil Foto Kamera / Unggah File (High-Res)
                       </p>
                       <p className="text-[10px] text-red-700">
                         Foto angka display timbangan atau kondisi sisa daging
@@ -583,10 +759,205 @@ export default function ButcherClosingView({
                   className="flex-1 py-3 bg-red-700 hover:bg-red-800 text-white font-extrabold rounded-xl text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
                 >
                   <Save className="w-4 h-4" />
-                  <span>Simpan Closing Rencana</span>
+                  <span>Simpan & Kunci Closing</span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- LOCKED DETAILS READ-ONLY MODAL --- */}
+      {viewLockedPlan && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 my-8 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1">
+                  <Lock className="w-3 h-3 text-emerald-700" />
+                  Status Terlock (Sudah Closing)
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-1 flex items-center gap-2">
+                  <span>{viewLockedPlan.plan.icon}</span>
+                  <span>{viewLockedPlan.plan.name}</span>
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewLockedPlan(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Lock Notice Banner */}
+            <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-3.5 text-xs text-emerald-950 flex items-start gap-2.5 shadow-2xs">
+              <ShieldCheck className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+              <div>
+                <strong className="block font-bold">Data Closing Terkunci Permanen:</strong>
+                Data timbangan fisik untuk rencana ini telah terkunci dan tersimpan sebagai <strong>Susut Jual</strong>. Data tidak dapat diinput ulang hingga tombol <em>Refresh Closing Harian</em> dijalankan untuk pembukaan stok besok.
+              </div>
+            </div>
+
+            {/* Detailed Numerical Breakdown */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3 border-b border-slate-200 pb-3">
+                <div>
+                  <span className="text-slate-400 text-[10px] block font-semibold">Sisa Kemarin (Stok Awal):</span>
+                  <strong className="text-slate-800 font-mono text-sm">{viewLockedPlan.openingKg.toFixed(3)} Kg</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[10px] block font-semibold">Diolah Baru Hari Ini:</span>
+                  <strong className="text-red-700 font-mono text-sm">{viewLockedPlan.processedKg.toFixed(3)} Kg</strong>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 border-b border-slate-200 pb-3 text-[11px]">
+                <div>
+                  <span className="text-slate-400 block">Total Tersedia:</span>
+                  <strong className="text-slate-800 font-mono">{viewLockedPlan.totalTersedia.toFixed(3)} Kg</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Realisasi Sales:</span>
+                  <strong className="text-emerald-700 font-mono">{viewLockedPlan.currentSales.toFixed(3)} Kg</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Sisa Stok Sistem:</span>
+                  <strong className="text-blue-700 font-mono">{viewLockedPlan.stokSistem.toFixed(3)} Kg</strong>
+                </div>
+              </div>
+
+              <div className="bg-emerald-100/70 border border-emerald-300 p-3 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-emerald-800 font-bold block">Timbangan Sisa Fisik Akhir:</span>
+                  <span className="text-base font-black text-emerald-950 font-mono">
+                    {viewLockedPlan.record.actualClosingStockKg.toFixed(3)} Kg
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-amber-800 font-bold block">Susut Jual (Display):</span>
+                  <span className="text-base font-black text-amber-900 font-mono">
+                    {viewLockedPlan.susutJual.toFixed(3)} Kg
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Photo Preview in Full Quality */}
+            {viewLockedPlan.record.photoUrl && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Foto Bukti Timbangan Fisik HD:
+                </label>
+                <div
+                  onClick={() => setZoomedPhotoUrl(viewLockedPlan.record.photoUrl)}
+                  className="rounded-2xl overflow-hidden border-2 border-slate-200 cursor-pointer shadow-xs hover:opacity-95 transition relative group"
+                >
+                  <img
+                    src={viewLockedPlan.record.photoUrl}
+                    alt="Bukti Foto Closing"
+                    className="w-full h-48 object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1.5 transition">
+                    <Eye className="w-4 h-4" /> Ketuk untuk Perbesar Layar Penuh
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {viewLockedPlan.record.note && (
+              <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl text-xs text-slate-700">
+                <span className="font-bold block text-slate-500 text-[10px]">Catatan Butcher:</span>
+                <p className="mt-0.5">{viewLockedPlan.record.note}</p>
+              </div>
+            )}
+
+            <div className="text-[11px] text-slate-400 text-right">
+              Dicatat oleh: <strong>{viewLockedPlan.record.butcherName}</strong> pada {viewLockedPlan.record.timestamp ? new Date(viewLockedPlan.record.timestamp).toLocaleTimeString('id-ID') : '-'}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setViewLockedPlan(null)}
+              className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition cursor-pointer"
+            >
+              Tutup Rincian
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- CONFIRM DAILY REFRESH / CARRYOVER MODAL --- */}
+      {isResetConfirmOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-black text-slate-900">
+                Refresh Closing Harian & Buka Hari Baru?
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Tindakan ini akan mengunci operasional hari ini dan secara otomatis memindahkan <strong>timbangan sisa stok fisik closing</strong> menjadi <strong>Stok Awal (Sisa Kemarin)</strong> untuk operasional hari besok.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl text-xs space-y-1.5 text-slate-700">
+              <div className="font-bold text-slate-900 flex items-center justify-between">
+                <span>Rencana yang sudah diclosing:</span>
+                <span className="text-emerald-700 font-mono font-black">{records.length} Item</span>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Antrian input closing akan di-refresh bersih untuk hari baru dengan sisa fisik kemarin sebagai opening balance.
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmOpen(false)}
+                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetAndCarryover}
+                className="flex-1 py-3 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-extrabold rounded-xl text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>Ya, Refresh & Buka Hari Baru</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- PHOTO ZOOM MODAL --- */}
+      {zoomedPhotoUrl && (
+        <div
+          className="fixed inset-0 z-60 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setZoomedPhotoUrl(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] w-full flex flex-col items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setZoomedPhotoUrl(null)}
+              className="absolute top-2 right-2 bg-black/60 text-white p-2 rounded-full hover:bg-black cursor-pointer z-10"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={zoomedPhotoUrl}
+              alt="Bukti Foto Timbangan HD"
+              className="max-h-[85vh] max-w-full object-contain rounded-2xl shadow-2xl border-2 border-white/20"
+            />
+            <p className="text-xs font-semibold text-slate-300 mt-2 text-center">
+              Foto Bukti Resolusi Tinggi (High-Res) • Ketuk di mana saja untuk menutup
+            </p>
           </div>
         </div>
       )}
