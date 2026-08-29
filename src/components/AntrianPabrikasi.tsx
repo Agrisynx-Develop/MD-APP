@@ -220,9 +220,14 @@ export default function AntrianPabrikasi({
                 </p>
               ) : (
                 readyItems.map((item) => {
-                  const loss = item.shrinkageThawing || 0;
-                  const lossPercent = item.shrinkageThawingPercent || 0;
-                  const isSafe = lossPercent <= safeThawingLossPercent;
+                  const loss = typeof item.shrinkageThawing === 'number' && !isNaN(item.shrinkageThawing) ? item.shrinkageThawing : 0;
+                  const lossPercent = typeof item.shrinkageThawingPercent === 'number' && !isNaN(item.shrinkageThawingPercent) ? item.shrinkageThawingPercent : 0;
+                  const threshold = typeof safeThawingLossPercent === 'number' && safeThawingLossPercent > 0 ? safeThawingLossPercent : 2;
+                  const isSafe = lossPercent <= threshold;
+                  const rawBarWidth = threshold > 0 ? (lossPercent / (threshold * 2)) * 100 : 0;
+                  const safeBarWidth = isNaN(rawBarWidth) || !isFinite(rawBarWidth) ? 0 : Math.min(100, Math.max(0, rawBarWidth));
+                  const weightAwal = typeof item.weightBeforeThawing === 'number' && !isNaN(item.weightBeforeThawing) ? item.weightBeforeThawing : 0;
+                  const weightKering = typeof item.weightAfterThawing === 'number' && !isNaN(item.weightAfterThawing) ? item.weightAfterThawing : weightAwal;
 
                   return (
                     <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-1.5">
@@ -233,13 +238,13 @@ export default function AntrianPabrikasi({
                         </span>
                       </div>
                       <div className="flex justify-between text-slate-500 text-[10px]">
-                        <span>Awal: {item.weightBeforeThawing.toFixed(1)} Kg</span>
-                        <span>Kering: {item.weightAfterThawing?.toFixed(1)} Kg</span>
+                        <span>Awal: {weightAwal.toFixed(1)} Kg</span>
+                        <span>Kering: {weightKering.toFixed(1)} Kg</span>
                       </div>
                       <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
                         <div
                           className={`h-full ${isSafe ? 'bg-emerald-500' : 'bg-red-500'}`}
-                          style={{ width: `${Math.min(100, (lossPercent / (safeThawingLossPercent * 2)) * 100)}%` }}
+                          style={{ width: `${safeBarWidth.toFixed(1)}%` }}
                         />
                       </div>
                     </div>
