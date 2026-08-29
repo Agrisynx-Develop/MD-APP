@@ -217,6 +217,13 @@ export default function Summary({
           const pesananMap = new Map<string, number>();
           const displayMap = new Map<string, { initialWeight: number; susutJualKg: number; netWeight: number }>();
 
+          const isPlanMatch = (a?: string, b?: string) => {
+            if (!a || !b) return false;
+            const cleanA = a.toLowerCase().trim();
+            const cleanB = b.toLowerCase().trim();
+            return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+          };
+
           segments.forEach((seg) => {
             const parentItem = items.find((i) => i.id === seg.itemId);
             const purpose = seg.openingPurpose || parentItem?.openingPurpose || 'UNTUK DISPLAY';
@@ -234,6 +241,27 @@ export default function Summary({
                 initialWeight: current.initialWeight + initW,
                 susutJualKg: current.susutJualKg + shrinkKg,
                 netWeight: current.netWeight + netW,
+              });
+            }
+          });
+
+          // Also merge closingRecords into displayMap if closed via Butcher closing view
+          closingRecords.forEach((c) => {
+            const name = (c.planName || 'RENCANA').toUpperCase();
+            const existing = displayMap.get(name);
+            const totalTersedia = c.openingStockKg + c.newProcessedKg + (c.adjustInKg || 0) - (c.adjustOutKg || 0);
+            
+            if (existing) {
+              displayMap.set(name, {
+                initialWeight: Math.max(existing.initialWeight, totalTersedia),
+                susutJualKg: c.susutJualKg > 0 ? c.susutJualKg : existing.susutJualKg,
+                netWeight: c.actualClosingStockKg > 0 ? c.actualClosingStockKg : existing.netWeight,
+              });
+            } else {
+              displayMap.set(name, {
+                initialWeight: totalTersedia,
+                susutJualKg: c.susutJualKg || 0,
+                netWeight: c.actualClosingStockKg || 0,
               });
             }
           });
