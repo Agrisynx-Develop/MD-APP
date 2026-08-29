@@ -26,7 +26,8 @@ import {
   Eye,
   X,
   Info,
-  ShieldCheck
+  ShieldCheck,
+  Sparkles
 } from 'lucide-react';
 
 interface ButcherClosingViewProps {
@@ -116,20 +117,20 @@ export default function ButcherClosingView({
     return isNaN(num) ? 0 : num;
   };
 
-  // Handle opening active input modal for an unlocked plan
-  const handleOpenClosingModal = (planObj: typeof STANDARD_PLANS[0]) => {
-    const existingRec = records.find((r) => isPlanMatch(r.planName, planObj.name));
-
-    // If already closed, open locked read-only details instead
-    if (existingRec) {
-      handleOpenLockedDetails(planObj, existingRec);
-      return;
-    }
+  // Handle opening active input modal for an unlocked plan or for editing
+  const handleOpenClosingModal = (planObj: typeof STANDARD_PLANS[0], existingRecordToEdit?: ClosingPlanRecord) => {
+    const existingRec = existingRecordToEdit || records.find((r) => isPlanMatch(r.planName, planObj.name));
 
     setSelectedPlan(planObj);
-    setPhysicalWeight('');
-    setClosingPhoto('');
-    setClosingNote('');
+    if (existingRec) {
+      setPhysicalWeight(existingRec.actualClosingStockKg !== undefined ? existingRec.actualClosingStockKg.toString() : '');
+      setClosingPhoto(existingRec.photoUrl || '');
+      setClosingNote(existingRec.note || '');
+    } else {
+      setPhysicalWeight('');
+      setClosingPhoto('');
+      setClosingNote('');
+    }
     setErrorMsg('');
   };
 
@@ -148,13 +149,14 @@ export default function ButcherClosingView({
     const adjIn = planAdj.filter((a) => a.type === 'IN').reduce((sum, a) => sum + a.weightKg, 0);
     const adjOut = planAdj.filter((a) => a.type === 'OUT').reduce((sum, a) => sum + a.weightKg, 0);
 
-    const openingKg = record.openingStockKg || carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0);
-    const processedKg = record.newProcessedKg || todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
+    const openingKg = (carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0)) || record.openingStockKg || 0;
+    const processedKg = (todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0)) || record.newProcessedKg || 0;
     const totalTersedia = openingKg + processedKg + adjIn - adjOut;
     
-    // Adaptive sales from segments
+    // Adaptive sales from segments or items
     const segmentSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
-    const currentSales = segmentSales > 0 ? segmentSales : record.salesKg;
+    const itemSales = todayPlanItems.concat(carryoverPlanItems).reduce((sum, i) => sum + (i.salesKg || 0), 0);
+    const currentSales = Math.max(segmentSales, itemSales, record.salesKg || 0);
     const stokSistem = Math.max(0, totalTersedia - currentSales);
     const susutJual = Math.max(0, stokSistem - record.actualClosingStockKg);
 
@@ -213,7 +215,7 @@ export default function ButcherClosingView({
 
     // Retrieve sales for this plan from segments
     const planSegments = segments.filter((s) => isPlanMatch(s.plannedFabrication, selectedPlan.name));
-    const calculatedSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
+    const segmentSales = planSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
 
     // Filter items processed today vs carryover
     const todayPlanItems = items.filter(
@@ -228,8 +230,11 @@ export default function ButcherClosingView({
     const adjIn = planAdj.filter((a) => a.type === 'IN').reduce((sum, a) => sum + a.weightKg, 0);
     const adjOut = planAdj.filter((a) => a.type === 'OUT').reduce((sum, a) => sum + a.weightKg, 0);
 
-    const openingStockKg = carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0);
-    const newProcessedKg = todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
+    const existingRec = records.find((r) => isPlanMatch(r.planName, selectedPlan.name));
+    const openingStockKg = (carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0)) || (existingRec ? existingRec.openingStockKg : 0);
+    const newProcessedKg = (todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0)) || (existingRec ? existingRec.newProcessedKg : 0);
+    const itemSales = todayPlanItems.concat(carryoverPlanItems).reduce((sum, i) => sum + (i.salesKg || 0), 0);
+    const calculatedSales = Math.max(segmentSales, itemSales, (existingRec ? existingRec.salesKg : 0));
     const totalTersedia = openingStockKg + newProcessedKg + adjIn - adjOut;
     const closingBySystem = Math.max(0, totalTersedia - calculatedSales);
     const susutJualKg = Math.max(0, closingBySystem - actualStock);
@@ -258,8 +263,8 @@ export default function ButcherClosingView({
       butcherName: currentUser.fullName,
     });
 
-    setSuccessMsg(`Closing fisik untuk "${selectedPlan.name}" berhasil disimpan & terlock sebagai Susut Jual (${susutJualKg.toFixed(3)} Kg)!`);
-    setTimeout(() => setSuccessMsg(''), 5000);
+    setSuccessMsg(`✓ Status rencana "${selectedPlan.name}" kini SUDAH CLOSING (Terlock). Timbangan fisik ${actualStock.toFixed(3)} Kg disimpan & terintegrasi sebagai calon Stok Awal besok!`);
+    setTimeout(() => setSuccessMsg(''), 6000);
     setSelectedPlan(null);
   };
 
@@ -268,10 +273,13 @@ export default function ButcherClosingView({
     if (onDailyResetAndCarryover) {
       onDailyResetAndCarryover();
       setIsResetConfirmOpen(false);
-      setSuccessMsg('✓ Berhasil melakukan Refresh Closing Harian! Sisa stok fisik telah dipindahkan menjadi Stok Awal (Sisa Kemarin) untuk operasional hari besok.');
+      setSuccessMsg('✓ Berhasil melakukan Refresh Closing Harian! Sisa stok fisik closing telah terintegrasi menjadi Stok Awal (Sisa Kemarin) untuk hari baru.');
       setTimeout(() => setSuccessMsg(''), 6000);
     }
   };
+
+  const closedCount = allUniquePlans.filter((p) => records.some((r) => isPlanMatch(r.planName, p.name))).length;
+  const isAllClosed = closedCount === allUniquePlans.length && allUniquePlans.length > 0;
 
   return (
     <div className="space-y-6">
@@ -291,17 +299,23 @@ export default function ButcherClosingView({
             Closing Fisik Per Rencana Potong
           </h1>
           <p className="text-xs text-red-200 mt-1">
-            Timbang sisa fisik di chiller/display. Data yang sudah closing akan <strong>terlock</strong> sebagai susut jual dan sisa fisiknya otomatis menjadi <strong>stok awal hari besok</strong> saat refresh closing harian.
+            Timbang sisa fisik di chiller/display. Data yang sudah diinput akan berubah menjadi <strong>Sudah Closing (Terlock)</strong>, permanen tidak kembali lagi, dan sisa fisiknya terintegrasi sebagai <strong>Stok Awal (Sisa Kemarin)</strong> besok.
           </p>
         </div>
 
         <div className="flex items-center gap-3 shrink-0 flex-wrap">
-          <div className="bg-red-950/70 border border-red-700/60 p-3 rounded-xl flex items-center gap-3">
-            <Camera className="w-5 h-5 text-red-300 animate-pulse" />
+          <div className={`p-3 rounded-xl flex items-center gap-3 border ${
+            isAllClosed
+              ? 'bg-emerald-950/90 border-emerald-600 text-emerald-100 shadow-sm'
+              : 'bg-red-950/70 border-red-700/60'
+          }`}>
+            <div className={`p-1.5 rounded-lg ${isAllClosed ? 'bg-emerald-700 text-white' : 'bg-red-800 text-red-200'}`}>
+              {isAllClosed ? <CheckCircle2 className="w-4 h-4 text-emerald-200" /> : <Camera className="w-4 h-4 animate-pulse" />}
+            </div>
             <div className="text-xs">
               <span className="text-slate-300 block font-medium">Status Closing:</span>
-              <strong className="text-white font-bold">
-                {records.length} dari {allUniquePlans.length} Selesai
+              <strong className={`font-bold ${isAllClosed ? 'text-emerald-300' : 'text-white'}`}>
+                {closedCount} dari {allUniquePlans.length} Selesai {isAllClosed ? '✓ (Lengkap)' : ''}
               </strong>
             </div>
           </div>
@@ -311,7 +325,7 @@ export default function ButcherClosingView({
               type="button"
               onClick={() => setIsResetConfirmOpen(true)}
               className="bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-extrabold px-3.5 py-3 rounded-xl shadow-sm transition flex items-center gap-2 cursor-pointer border border-amber-400/40"
-              title="Tutup siklus operasional hari ini dan jadikan sisa fisik timbangan sebagai Stok Awal hari besok"
+              title="Tutup siklus operasional hari ini dan integrasikan sisa fisik timbangan menjadi Stok Awal (Sisa Kemarin) hari besok"
             >
               <RefreshCw className="w-4 h-4" />
               <span>Refresh Closing Harian (Carryover)</span>
@@ -346,12 +360,8 @@ export default function ButcherClosingView({
           const adjIn = planAdj.filter((a) => a.type === 'IN').reduce((sum, a) => sum + a.weightKg, 0);
           const adjOut = planAdj.filter((a) => a.type === 'OUT').reduce((sum, a) => sum + a.weightKg, 0);
 
-          const openingKg = existingRec
-            ? existingRec.openingStockKg
-            : carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0);
-          const processedKg = existingRec
-            ? existingRec.newProcessedKg
-            : todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0);
+          const openingKg = (carryoverPlanItems.reduce((sum, i) => sum + i.weightBeforeThawing, 0)) || (existingRec ? existingRec.openingStockKg : 0);
+          const processedKg = (todayPlanItems.reduce((sum, i) => sum + (i.weightAfterThawing || i.weightBeforeThawing), 0)) || (existingRec ? existingRec.newProcessedKg : 0);
           const totalTersedia = openingKg + processedKg + adjIn - adjOut;
 
           // Adaptive Sales (recalculates whenever segments change)
@@ -367,7 +377,7 @@ export default function ButcherClosingView({
               key={plan.name}
               className={`bg-white rounded-2xl border transition-all p-5 shadow-xs flex flex-col justify-between ${
                 existingRec
-                  ? 'border-emerald-300 bg-emerald-50/15 ring-1 ring-emerald-200'
+                  ? 'border-emerald-400 bg-emerald-50/20 ring-2 ring-emerald-300/70 shadow-sm'
                   : 'border-slate-200 hover:border-red-400'
               }`}
             >
@@ -384,12 +394,12 @@ export default function ButcherClosingView({
                   </div>
 
                   {existingRec ? (
-                    <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full text-[11px] font-extrabold flex items-center gap-1 shrink-0 shadow-2xs">
-                      <Lock className="w-3.5 h-3.5 text-emerald-700" />
-                      Terlock
+                    <span className="px-2.5 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-full text-[11px] font-black flex items-center gap-1.5 shrink-0 shadow-2xs">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                      Sudah Closing (Terlock)
                     </span>
                   ) : (
-                    <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-[11px] font-bold flex items-center gap-1 shrink-0">
+                    <span className="px-2.5 py-1 bg-amber-50 text-amber-900 border border-amber-300 rounded-full text-[11px] font-bold flex items-center gap-1.5 shrink-0">
                       <Clock className="w-3.5 h-3.5 text-amber-600" />
                       Belum Closing
                     </span>
@@ -417,7 +427,9 @@ export default function ButcherClosingView({
                   <div className="bg-emerald-50/90 border border-emerald-300 p-3 rounded-xl space-y-2">
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="text-[10px] text-emerald-800 font-semibold block">Timbangan Fisik Sisa:</span>
+                        <span className="text-[10px] text-emerald-800 font-bold block uppercase tracking-wider">
+                          ✓ Timbangan Fisik Closing (Sisa Real):
+                        </span>
                         <span className="text-base font-black text-emerald-950 font-mono">
                           {existingRec.actualClosingStockKg.toFixed(3)} Kg
                         </span>
@@ -439,9 +451,14 @@ export default function ButcherClosingView({
 
                     <div className="pt-2 border-t border-emerald-200 flex items-center justify-between text-xs">
                       <span className="text-slate-600 font-medium">Susut Jual (Display):</span>
-                      <span className="font-mono font-black text-amber-800">
+                      <span className="font-mono font-black text-amber-900 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-200">
                         {susutJualKg.toFixed(3)} Kg
                       </span>
+                    </div>
+
+                    <div className="text-[10px] text-emerald-800 bg-emerald-100/70 border border-emerald-200 px-2 py-1 rounded-lg flex items-center gap-1.5 font-bold">
+                      <Sparkles className="w-3 h-3 text-emerald-600 shrink-0" />
+                      <span>Timbangan ini terintegrasi sebagai Stok Awal Sisa Kemarin</span>
                     </div>
                   </div>
                 ) : (
@@ -458,11 +475,11 @@ export default function ButcherClosingView({
                   <button
                     type="button"
                     onClick={() => handleOpenLockedDetails(plan, existingRec)}
-                    className="w-full py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs bg-emerald-100/80 hover:bg-emerald-200 text-emerald-900 border border-emerald-300"
+                    className="w-full py-2.5 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer shadow-xs bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white"
                   >
-                    <Lock className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>Data Terkunci (Lihat Rincian)</span>
-                    <Eye className="w-3.5 h-3.5 ml-auto text-emerald-700" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                    <span>Sudah Closing (Lihat Rincian / Koreksi)</span>
+                    <Eye className="w-3.5 h-3.5 ml-auto text-emerald-200" />
                   </button>
                 ) : (
                   <button
@@ -873,13 +890,28 @@ export default function ButcherClosingView({
               Dicatat oleh: <strong>{viewLockedPlan.record.butcherName}</strong> pada {viewLockedPlan.record.timestamp ? new Date(viewLockedPlan.record.timestamp).toLocaleTimeString('id-ID') : '-'}
             </div>
 
-            <button
-              type="button"
-              onClick={() => setViewLockedPlan(null)}
-              className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition cursor-pointer"
-            >
-              Tutup Rincian
-            </button>
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const p = viewLockedPlan.plan;
+                  const r = viewLockedPlan.record;
+                  setViewLockedPlan(null);
+                  handleOpenClosingModal(p, r);
+                }}
+                className="flex-1 py-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 shadow-sm"
+              >
+                <Scale className="w-4 h-4" />
+                <span>Koreksi / Update Timbangan</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewLockedPlan(null)}
+                className="flex-1 py-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition cursor-pointer"
+              >
+                Tutup Rincian
+              </button>
+            </div>
           </div>
         </div>
       )}
