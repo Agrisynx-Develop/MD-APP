@@ -977,7 +977,7 @@ export default function ButcherClosingView({
               className="absolute top-2 right-2 bg-black/60 text-white p-2 rounded-full hover:bg-black cursor-pointer z-10"
             >
               <X className="w-6 h-6" />
-            </button>
+            </button> 
             <img
               src={zoomedPhotoUrl}
               alt="Bukti Foto Timbangan HD"
