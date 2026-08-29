@@ -6,6 +6,7 @@ import {
   UserAccount,
   Store
 } from '../types';
+import { processHighResImage } from '../utils/imageCompressor';
 import {
   Beef,
   Scale,
@@ -130,15 +131,20 @@ export default function ButcherView({
     { name: 'FRIBOY / Daging Prem 2', category: 'DAGING PREMIUM' },
   ];
 
-  // Handle image upload from input file
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, setter: (s: string) => void) => {
+  // Handle image upload from input file with High-Res Optimizer
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, setter: (s: string) => void) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setter(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const optimized = await processHighResImage(file, {
+          maxWidth: 1920,
+          maxHeight: 1920,
+          quality: 0.85,
+        });
+        setter(optimized);
+      } catch (err) {
+        console.error('Error optimizing photo:', err);
+      }
     }
   };
 
