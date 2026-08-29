@@ -8,6 +8,7 @@ import {
   Store
 } from '../types';
 import { processHighResImage } from '../utils/imageCompressor';
+import { isMatchPlan } from '../utils/storeHelper';
 import {
   CheckSquare,
   Scale,
@@ -51,15 +52,10 @@ export default function ButcherClosingView({
   onSaveClosingRecord,
   onDailyResetAndCarryover,
 }: ButcherClosingViewProps) {
-  const records = existingClosingRecords && existingClosingRecords.length > 0 ? existingClosingRecords : closingRecords;
+  const records = existingClosingRecords ?? closingRecords ?? [];
   
   // Helper for matching plan name
-  const isPlanMatch = (a?: string, b?: string) => {
-    if (!a || !b) return false;
-    const cleanA = a.toLowerCase().trim();
-    const cleanB = b.toLowerCase().trim();
-    return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
-  };
+  const isPlanMatch = (a?: string, b?: string) => isMatchPlan(a, b);
 
   // Standard Rencana Potong list
   const STANDARD_PLANS = [
