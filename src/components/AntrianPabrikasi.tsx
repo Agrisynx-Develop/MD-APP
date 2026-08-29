@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ThawingItem } from '../types';
-import { Clock, Scale, ArrowRight, Play, AlertCircle, Sparkles, Upload, ArrowRightLeft, Camera, Check } from 'lucide-react';
+import { processHighResImage } from '../utils/imageCompressor';
+import { Clock, Scale, ArrowRight, Play, AlertCircle, Sparkles, Upload, ArrowRightLeft, Camera, Check, Loader2 } from 'lucide-react';
 
 interface AntrianPabrikasiProps {
   items: ThawingItem[];
@@ -77,14 +78,21 @@ export default function AntrianPabrikasi({
     setErrorMsg('');
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setThawingImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setErrorMsg('');
+      try {
+        const optimized = await processHighResImage(file, {
+          maxWidth: 1920,
+          maxHeight: 1920,
+          quality: 0.85,
+        });
+        setThawingImage(optimized);
+      } catch (err) {
+        console.error('Error optimizing photo in AntrianPabrikasi:', err);
+        setErrorMsg('Gagal memproses foto.');
+      }
     }
   };
 
