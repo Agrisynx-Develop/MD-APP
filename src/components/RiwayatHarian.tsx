@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 // @ts-ignore
 import html2pdf from 'html2pdf.js';
-import { ThawingItem, FabricationSegment, DailyClosingReport, ReportPhotoAttachment, Store } from '../types';
+import { ThawingItem, FabricationSegment, DailyClosingReport, ReportPhotoAttachment, Store, ClosingPlanRecord } from '../types';
+import { processHighResImage } from '../utils/imageCompressor';
 import {
   FileText,
   CheckSquare,
@@ -17,12 +18,14 @@ import {
   Maximize2,
   X,
   FileCheck,
+  Loader2,
 } from 'lucide-react';
 
 interface RiwayatHarianProps {
   items: ThawingItem[];
   segments: FabricationSegment[];
   reports: DailyClosingReport[];
+  closingRecords?: ClosingPlanRecord[];
   currentStore?: Store;
   onCloseDay: (closedReport: DailyClosingReport) => void;
 }
@@ -31,6 +34,7 @@ export default function RiwayatHarian({
   items,
   segments,
   reports,
+  closingRecords = [],
   currentStore,
   onCloseDay,
 }: RiwayatHarianProps) {
@@ -38,6 +42,7 @@ export default function RiwayatHarian({
   const [viewingTodayDraft, setViewingTodayDraft] = useState(true);
   const [isClosingConfirm, setIsClosingConfirm] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isOptimizingPhoto, setIsOptimizingPhoto] = useState(false);
 
   // Dynamic store name
   const cleanStoreName = currentStore?.name ? String(currentStore.name).replace(/^TDN\s*/i, '').trim() : 'CIKUT';
@@ -58,6 +63,13 @@ export default function RiwayatHarian({
   // Active view tab: 'report' or 'lampiran'
   const [reportTab, setReportTab] = useState<'report' | 'lampiran'>('report');
 
+  const isPlanMatch = (a?: string, b?: string) => {
+    if (!a || !b) return false;
+    const cleanA = a.toLowerCase().trim();
+    const cleanB = b.toLowerCase().trim();
+    return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+  };
+
   // --- COMPILE TODAY'S OPERATION DRAFT ---
   const compileTodayDraft = (): DailyClosingReport => {
     const now = new Date();
@@ -72,7 +84,12 @@ export default function RiwayatHarian({
     const totalThawingLoss = Math.max(0, totalWeightBeforeThawing - totalWeightAfterThawing);
     const totalFabricationLoss = Math.max(0, totalWeightAfterThawing - totalWeightAfterFabrication);
     const totalProcessLoss = Math.max(0, totalWeightBeforeThawing - totalWeightAfterFabrication);
-    const totalSusutJual = segments.reduce((sum, s) => sum + (s.periodicShrinkage || 0), 0);
+
+    // Derived from Closing Rencana Potong (closingRecords) as requested
+    const totalSusutJual = closingRecords && closingRecords.length > 0
+      ? closingRecords.reduce((sum, r) => sum + (r.susutJualKg || 0), 0)
+      : segments.reduce((sum, s) => sum + (s.periodicShrinkage || 0), 0);
+
     const totalSalesKg = segments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
 
     const itemsProcessedList = items.map((item) => {
@@ -89,7 +106,15 @@ export default function RiwayatHarian({
       const processLossKg = Math.max(0, item.weightBeforeThawing - (itemSegments.length > 0 ? finalWeight : weightAfter));
       const processLossPercent = item.weightBeforeThawing > 0 ? (processLossKg / item.weightBeforeThawing) * 100 : 0;
 
-      const susutJualKg = itemSegments.reduce((sum, s) => sum + (s.periodicShrinkage || 0), 0);
+      // Find matching closing record for this item's plan
+      const matchingClosing = closingRecords?.find(
+        (c) => isPlanMatch(c.planName, item.plannedFabrication) || isPlanMatch(c.planName, item.name)
+      );
+
+      const susutJualKg = matchingClosing
+        ? matchingClosing.susutJualKg
+        : itemSegments.reduce((sum, s) => sum + (s.periodicShrinkage || 0), 0);
+
       const susutJualPercent = (finalWeight + susutJualKg) > 0 ? (susutJualKg / (finalWeight + susutJualKg)) * 100 : 0;
 
       const itemSalesKg = itemSegments.reduce((sum, s) => sum + (s.salesKg || 0), 0);
@@ -142,9 +167,20 @@ export default function RiwayatHarian({
         uploadedAt: item.createdAt || new Date().toISOString(),
       }));
 
-    // Combine dashboard photos and user-uploaded draft photos cleanly (avoiding duplicate IDs)
+    // Extract photos from Closing Fisik per Rencana Potong
+    const closingPhotos: ReportPhotoAttachment[] = (closingRecords || [])
+      .filter((rec) => rec.photoUrl && rec.photoUrl !== 'placeholder' && rec.photoUrl !== '')
+      .map((rec) => ({
+        id: `photo_closing_${rec.id}`,
+        url: rec.photoUrl,
+        caption: rec.photoCaption || `Foto Timbangan Closing: ${rec.planName} (${rec.actualClosingStockKg.toFixed(2)} Kg)`,
+        category: 'Closing Stock' as const,
+        uploadedAt: rec.timestamp || new Date().toISOString(),
+      }));
+
+    // Combine dashboard photos, closing photos, and user-uploaded draft photos cleanly
     const combinedPhotosMap = new Map<string, ReportPhotoAttachment>();
-    [...dashboardItemPhotos, ...draftPhotos].forEach((p) => {
+    [...dashboardItemPhotos, ...closingPhotos, ...draftPhotos].forEach((p) => {
       combinedPhotosMap.set(p.id, p);
     });
     const combinedPhotos = Array.from(combinedPhotosMap.values());
@@ -172,15 +208,25 @@ export default function RiwayatHarian({
   const todayDraft = compileTodayDraft();
   const activeReportView = selectedReport || (viewingTodayDraft ? todayDraft : null);
 
-  // Handle Photo Upload
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Photo Upload with High-Res Optimizer
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewPhotoUrl(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setIsOptimizingPhoto(true);
+      setUploadError('');
+      try {
+        const optimized = await processHighResImage(file, {
+          maxWidth: 1920,
+          maxHeight: 1920,
+          quality: 0.85,
+        });
+        setNewPhotoUrl(optimized);
+      } catch (err) {
+        console.error('Error optimizing photo attachment:', err);
+        setUploadError('Gagal memproses resolusi foto.');
+      } finally {
+        setIsOptimizingPhoto(false);
+      }
     }
   };
 
@@ -719,7 +765,12 @@ export default function RiwayatHarian({
                               const totalSebelum = planItems.reduce((acc, i) => acc + (i.weightBefore || 0), 0);
                               const totalSetelah = planItems.reduce((acc, i) => acc + (i.weightAfter || 0), 0);
                               const selisihProses = -(totalSebelum - totalSetelah); // negative value
-                              const susutJual = planItems.reduce((acc, i) => acc + (i.susutJualKg || 0), 0);
+                              const matchingPlanClosing = closingRecords?.find(
+                                (c) => isPlanMatch(c.planName, planName)
+                              );
+                              const susutJual = matchingPlanClosing
+                                ? matchingPlanClosing.susutJualKg
+                                : planItems.reduce((acc, i) => acc + (i.susutJualKg || 0), 0);
                               const totalSusutKg = Math.max(0, totalSebelum - totalSetelah) + Math.abs(susutJual);
                               const shrinkageRatePct = totalSebelum > 0 ? (totalSusutKg / totalSebelum) * 100 : 0;
                               const isAlertExceeded = shrinkageRatePct > 2.0;
