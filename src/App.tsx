@@ -44,7 +44,7 @@ import {
   updateTableInSheets,
   pushAllDataToSheets,
 } from './utils/sheetsApi';
-import { matchStoreEntity, getEffectiveStore } from './utils/storeHelper';
+import { matchStoreEntity, getEffectiveStore, isMatchPlan } from './utils/storeHelper';
 
 // Auth Screen
 import LoginScreen from './components/LoginScreen';
@@ -261,7 +261,12 @@ export default function App() {
 
       if (resRecords && resRecords.ok) {
         const data = await resRecords.json();
-        if (Array.isArray(data)) setClosingRecords(data);
+        if (Array.isArray(data) && data.length > 0) {
+          setClosingRecords(data);
+        } else {
+          const local = getClosingPlanRecords();
+          if (local && local.length > 0) setClosingRecords(local);
+        }
       } else {
         setClosingRecords(getClosingPlanRecords());
       }
@@ -728,7 +733,10 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
     const existingIdx = closingRecords.findIndex(
-      (r) => r.storeId === newRec.storeId && r.planName === newRec.planName && r.date === newRec.date
+      (r) =>
+        matchStoreEntity(r.storeId, { id: newRec.storeId }) &&
+        isMatchPlan(r.planName, newRec.planName) &&
+        r.date === newRec.date
     );
     let updated: ClosingPlanRecord[];
     if (existingIdx >= 0) {
@@ -738,7 +746,7 @@ export default function App() {
       updated = [newRec, ...closingRecords];
     }
     setClosingRecords(updated);
-    saveClosingPlanRecords(updated);
+    saveClosingPlanRecords(updated, newRec);
 
     upsertRecordToSheets('closing_plan_records', newRec);
     fetch('/api/closing-records', {
