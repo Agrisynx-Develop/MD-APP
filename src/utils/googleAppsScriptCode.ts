@@ -31,11 +31,26 @@ var TABLE_SCHEMAS = {
   'Master_COGS': ['id', 'itemCode', 'itemName', 'planName', 'cogsPerKg', 'defaultPricePerKg', 'sellingPricePerKg', 'category', 'updatedAt', 'updatedBy'],
   'Thawing_Daging': ['id', 'storeId', 'name', 'pabrikasiCategory', 'plannedFabrication', 'openingPurpose', 'status', 'weightBeforeThawing', 'weightAfterThawing', 'shrinkageThawing', 'shrinkageThawingPercent', 'susutJualKg', 'salesKg', 'thawingStartTime', 'thawingEndTime', 'durationMinutes', 'butcherName', 'isCarryover', 'image', 'createdAt'],
   'Pabrikasi_Segmen': ['id', 'storeId', 'itemId', 'itemName', 'segmentName', 'targetWeight', 'actualWeight', 'periodicShrinkage', 'salesKg', 'plannedFabrication', 'openingPurpose', 'isTransferred', 'originalPurpose', 'transferTimestamp', 'createdAt'],
-  'Closing_Fisik': ['id', 'storeId', 'planName', 'date', 'displayClosingKg', 'pesananClosingKg', 'totalPhysicalClosingKg', 'photoDisplayUrl', 'photoPesananUrl', 'timestamp'],
+  'Closing_Fisik': ['id', 'storeId', 'date', 'planName', 'category', 'openingStockKg', 'newProcessedKg', 'salesKg', 'adjustInKg', 'adjustOutKg', 'closingStockBySystemKg', 'actualClosingStockKg', 'susutJualKg', 'photoUrl', 'photoCaption', 'note', 'butcherName', 'timestamp'],
   'Laporan_Closing': ['id', 'storeId', 'storeName', 'date', 'totalWeightRaw', 'totalWeightAfterThawing', 'totalWeightFabricated', 'totalPeriodicShrinkage', 'totalSales', 'totalEndStock', 'thawingLossPercent', 'fabricationLossPercent', 'salesLossPercent', 'overallLossPercent', 'statusAlert', 'closingPhotoUrl', 'butcherName', 'createdAt'],
   'Koreksi_Stok': ['id', 'storeId', 'planName', 'type', 'weightKg', 'reason', 'adminName', 'createdAt'],
   'Loss_Config': ['id', 'maxProcessLossPercent', 'maxSalesLossPercent', 'maxDailyLossPercent', 'safeThawingLossPercent', 'safeFabricationLossPercent', 'salesPredictionKg']
 };
+
+function resolveGASSheetName(table) {
+  var map = {
+    'thawing_items': 'Thawing_Daging', 'thawingItems': 'Thawing_Daging',
+    'fabrication_segments': 'Pabrikasi_Segmen', 'fabricationSegments': 'Pabrikasi_Segmen',
+    'closing_plan_records': 'Closing_Fisik', 'closingPlanRecords': 'Closing_Fisik',
+    'daily_closing_reports': 'Laporan_Closing', 'dailyClosingReports': 'Laporan_Closing', 'daily_reports': 'Laporan_Closing',
+    'stock_adjustments': 'Koreksi_Stok', 'stockAdjustments': 'Koreksi_Stok',
+    'stores': 'Toko_Cabang', 'stores_list': 'Toko_Cabang',
+    'users': 'Pengguna', 'users_list': 'Pengguna',
+    'cogs_master': 'Master_COGS', 'cogsMaster': 'Master_COGS',
+    'loss_config': 'Loss_Config', 'lossConfig': 'Loss_Config'
+  };
+  return map[table] || table;
+}
 
 /**
  * Handle HTTP GET Requests (Read Data)
@@ -137,7 +152,7 @@ function doPost(e) {
 
     // 1. PUSH / UPDATE ENTIRE TABLE
     if (action === 'updateTable') {
-      var table = payload.table;
+      var table = resolveGASSheetName(payload.table);
       var items = payload.items || [];
       if (!table) {
         return jsonResponse({ success: false, error: 'Table name is required' });
@@ -154,7 +169,7 @@ function doPost(e) {
 
     // 2. UPSERT RECORD (Smart atomic update row by ID without clobbering whole sheet)
     if (action === 'upsertRecord') {
-      var table = payload.table;
+      var table = resolveGASSheetName(payload.table);
       var record = payload.record || payload.item;
       if (!table || !record) {
         return jsonResponse({ success: false, error: 'Table and record are required for upsertRecord' });
@@ -172,7 +187,7 @@ function doPost(e) {
 
     // 3. BATCH UPSERT RECORDS
     if (action === 'upsertRecords') {
-      var table = payload.table;
+      var table = resolveGASSheetName(payload.table);
       var records = payload.records || payload.items || [];
       if (!table) {
         return jsonResponse({ success: false, error: 'Table is required for upsertRecords' });
@@ -191,7 +206,7 @@ function doPost(e) {
 
     // 4. DELETE SINGLE RECORD BY ID
     if (action === 'deleteRecord') {
-      var table = payload.table;
+      var table = resolveGASSheetName(payload.table);
       var recordId = payload.id || payload.recordId;
       if (!table || !recordId) {
         return jsonResponse({ success: false, error: 'Table and id are required for deleteRecord' });
