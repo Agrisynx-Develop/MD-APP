@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ThawingItem, FabricationSegment, Store } from '../types';
 import { predictDailySales } from '../utils/mlPrediction';
+import { processHighResImage } from '../utils/imageCompressor';
 import {
   calculateTotalShrinkage,
   aggregateShrinkageByPabrikasi,
@@ -239,17 +240,23 @@ export default function Dashboard({
     setCategory(meat.category);
   };
 
-  // Image upload handler
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Image upload handler with High-Resolution processing
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setUploadProgress(true);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImage(reader.result as string);
+      try {
+        const optimized = await processHighResImage(file, {
+          maxWidth: 1920,
+          maxHeight: 1920,
+          quality: 0.85,
+        });
+        setImage(optimized);
+      } catch (err) {
+        console.error('Error optimizing image:', err);
+      } finally {
         setUploadProgress(false);
-      };
-      reader.readAsDataURL(file);
+      }
     }
   };
 
