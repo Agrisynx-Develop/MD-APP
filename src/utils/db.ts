@@ -220,13 +220,56 @@ export const saveCogsMaster = (cogs: CogsMaster[]) => {
   }
 };
 
+/**
+ * Defensive localStorage setter with quota management and fallback
+ */
+export function safeSetItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (err: any) {
+    console.warn(`[LocalStorage] Quota warning on ${key}:`, err);
+    try {
+      // If quota exceeded, try to clean up non-critical cache or compress stored images
+      if (key === 'closing_plan_records') {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) {
+          // Keep transaction data, but sanitize redundant large image base64 if needed
+          const trimmed = parsed.map((item, idx) => {
+            if (idx > 10 && item.photoUrl && item.photoUrl.length > 50000) {
+              return { ...item, photoUrl: '' };
+            }
+            return item;
+          });
+          localStorage.setItem(key, JSON.stringify(trimmed));
+          return;
+        }
+      }
+      if (key === 'thawing_items') {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) {
+          const trimmed = parsed.map((item, idx) => {
+            if (idx > 15 && item.image && item.image.length > 50000) {
+              return { ...item, image: 'placeholder' };
+            }
+            return item;
+          });
+          localStorage.setItem(key, JSON.stringify(trimmed));
+          return;
+        }
+      }
+    } catch (innerErr) {
+      console.error(`[LocalStorage] Failed to write ${key}:`, innerErr);
+    }
+  }
+}
+
 export const getStockAdjustments = (): StockAdjustment[] => {
   const data = localStorage.getItem('stock_adjustments');
   return data ? JSON.parse(data) : [];
 };
 
 export const saveStockAdjustments = (adjs: StockAdjustment[], updatedSingleAdj?: StockAdjustment) => {
-  localStorage.setItem('stock_adjustments', JSON.stringify(adjs));
+  safeSetItem('stock_adjustments', JSON.stringify(adjs));
   postApiBackground('/api/adjustments', adjs);
   if (getGoogleAppsScriptUrl()) {
     if (updatedSingleAdj) {
@@ -243,7 +286,7 @@ export const getClosingPlanRecords = (): ClosingPlanRecord[] => {
 };
 
 export const saveClosingPlanRecords = (records: ClosingPlanRecord[], updatedSingleRecord?: ClosingPlanRecord) => {
-  localStorage.setItem('closing_plan_records', JSON.stringify(records));
+  safeSetItem('closing_plan_records', JSON.stringify(records));
   postApiBackground('/api/closing-records', records);
   if (getGoogleAppsScriptUrl()) {
     if (updatedSingleRecord) {
@@ -260,7 +303,7 @@ export const getThawingItems = (): ThawingItem[] => {
 };
 
 export const saveThawingItems = (items: ThawingItem[], updatedSingleItem?: ThawingItem) => {
-  localStorage.setItem('thawing_items', JSON.stringify(items));
+  safeSetItem('thawing_items', JSON.stringify(items));
   postApiBackground('/api/thawing-items', items);
   if (getGoogleAppsScriptUrl()) {
     if (updatedSingleItem) {
@@ -283,7 +326,7 @@ export const getFabricationSegments = (): FabricationSegment[] => {
 };
 
 export const saveFabricationSegments = (segments: FabricationSegment[], updatedSingleSegment?: FabricationSegment) => {
-  localStorage.setItem('fabrication_segments', JSON.stringify(segments));
+  safeSetItem('fabrication_segments', JSON.stringify(segments));
   postApiBackground('/api/fabrication-segments', segments);
   if (getGoogleAppsScriptUrl()) {
     if (updatedSingleSegment) {
@@ -300,7 +343,7 @@ export const getDailyReports = (): DailyClosingReport[] => {
 };
 
 export const saveDailyReports = (reports: DailyClosingReport[], updatedSingleReport?: DailyClosingReport) => {
-  localStorage.setItem('daily_reports', JSON.stringify(reports));
+  safeSetItem('daily_reports', JSON.stringify(reports));
   postApiBackground('/api/reports', reports);
   if (getGoogleAppsScriptUrl()) {
     if (updatedSingleReport) {
@@ -317,7 +360,7 @@ export const getLossConfig = (): LossAlertConfig => {
 };
 
 export const saveLossConfig = (config: LossAlertConfig) => {
-  localStorage.setItem('loss_config', JSON.stringify(config));
+  safeSetItem('loss_config', JSON.stringify(config));
   postApiBackground('/api/loss-config', config);
 };
 
@@ -336,7 +379,7 @@ export const resetDatabase = async () => {
 
 /**
  * Perform a full pull from Google Spreadsheet Cloud API
- * and refresh local cache
+ * and refresh local cache (Defensive: never overwrites valid local records with empty array)
  */
 export const pullAllDataFromGoogleSheets = async (): Promise<{
   success: boolean;
@@ -347,31 +390,31 @@ export const pullAllDataFromGoogleSheets = async (): Promise<{
   if (result.success && result.data) {
     const d = result.data;
     if (d.stores && d.stores.length > 0) {
-      localStorage.setItem('stores_list', JSON.stringify(d.stores));
+      safeSetItem('stores_list', JSON.stringify(d.stores));
     }
     if (d.users && d.users.length > 0) {
-      localStorage.setItem('users_list', JSON.stringify(d.users));
+      safeSetItem('users_list', JSON.stringify(d.users));
     }
     if (d.cogsMaster && d.cogsMaster.length > 0) {
-      localStorage.setItem('cogs_master', JSON.stringify(normalizeCogsList(d.cogsMaster)));
+      safeSetItem('cogs_master', JSON.stringify(normalizeCogsList(d.cogsMaster)));
     }
-    if (d.thawingItems) {
-      localStorage.setItem('thawing_items', JSON.stringify(d.thawingItems));
+    if (d.thawingItems && d.thawingItems.length > 0) {
+      safeSetItem('thawing_items', JSON.stringify(d.thawingItems));
     }
-    if (d.fabricationSegments) {
-      localStorage.setItem('fabrication_segments', JSON.stringify(d.fabricationSegments));
+    if (d.fabricationSegments && d.fabricationSegments.length > 0) {
+      safeSetItem('fabrication_segments', JSON.stringify(d.fabricationSegments));
     }
-    if (d.closingPlanRecords) {
-      localStorage.setItem('closing_plan_records', JSON.stringify(d.closingPlanRecords));
+    if (d.closingPlanRecords && d.closingPlanRecords.length > 0) {
+      safeSetItem('closing_plan_records', JSON.stringify(d.closingPlanRecords));
     }
-    if (d.dailyClosingReports) {
-      localStorage.setItem('daily_reports', JSON.stringify(d.dailyClosingReports));
+    if (d.dailyClosingReports && d.dailyClosingReports.length > 0) {
+      safeSetItem('daily_reports', JSON.stringify(d.dailyClosingReports));
     }
-    if (d.stockAdjustments) {
-      localStorage.setItem('stock_adjustments', JSON.stringify(d.stockAdjustments));
+    if (d.stockAdjustments && d.stockAdjustments.length > 0) {
+      safeSetItem('stock_adjustments', JSON.stringify(d.stockAdjustments));
     }
     if (d.lossConfig) {
-      localStorage.setItem('loss_config', JSON.stringify(d.lossConfig));
+      safeSetItem('loss_config', JSON.stringify(d.lossConfig));
     }
   }
   return result;
